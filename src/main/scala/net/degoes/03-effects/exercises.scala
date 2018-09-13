@@ -59,7 +59,14 @@ object zio_background {
   //
   // Rewrite `program1` to use a for comprehension.
   //
-  val yourName2: Program[Unit] = ???
+  val yourName2: Program[Unit] = for {
+    _    <- writeLine("What is your name?")
+    name <- readLine
+    _    <- writeLine("Hello, " + name + ", good to meet you!")
+  } yield ()
+  // Scala translates for-comprehensions into a flatMaps and a final maps (and filters)
+  // (problem with final map is when you have a recursive call, will leak heap)
+  // In for-comprehensions: To the right of ever arrow make sure you have a monadic value (F), in yield normal value
 
   //
   // EXERCISE 2
@@ -67,7 +74,11 @@ object zio_background {
   // Rewrite `yourName2` using the helper function `getName`, which shows how
   // to create larger programs from smaller programs.
   //
-  def yourName3: Program[Unit] = ???
+  def yourName3: Program[Unit] = for {
+    name <- getName
+    _    <- writeLine("Hello, " + name + ", good to meet you!")
+  } yield ()
+
 
   val getName: Program[String] =
     writeLine("What is your name?").flatMap(_ => readLine)
@@ -78,7 +89,14 @@ object zio_background {
   // Implement the following effectful procedure, which interprets
   // `Program[A]` into `A`. You can use this procedure to "run" programs.
   //
-  def interpret[A](program: Program[A]): A = ???
+  def interpret[A](program: Program[A]): A = program match {
+    case Program.WriteLine(line, next) =>
+      println(line); interpret(next)
+    case Program.ReadLine(next) =>
+      interpret(next(scala.io.StdIn.readLine()))
+    case Program.Return(value) =>
+      value()
+  }
 
   //
   // EXERCISE 4
@@ -86,8 +104,13 @@ object zio_background {
   // Implement the following function, which shows how to write a combinator
   // that operates on programs.
   //
-  def sequence[A](programs: List[Program[A]]): Program[List[A]] =
-    ???
+  def sequence[A](programs: List[Program[A]]): Program[List[A]] = programs match {
+    case Nil => point(Nil)
+    case p :: ps => for {
+      a <- p
+      as <- sequence(ps)
+    } yield a :: as
+  }
 
   //
   // EXERCISE 5
@@ -113,7 +136,26 @@ object zio_background {
     }
 
   }
-  def ageExplainer2: Program[Unit] = ???
+  def ageExplainer2: Program[Int] = for { // was: Program[Unit], but Program[Int] more interesting
+    _    <- writeLine("What is your age?")
+    line <- readLine
+    age  <- scala.util.Try(line.toInt).toOption match {
+             case Some(age) =>
+               (if      (age < 12)  writeLine("You are a kid")
+                else if (age < 20)  writeLine("You are a teenager")
+                else if (age < 30)  writeLine("You are a grownup")
+                else if (age < 50)  writeLine("You are an adult")
+                else if (age < 80)  writeLine("You are a mature adult")
+                else if (age < 100) writeLine("You are elderly")
+                else                writeLine("You are probably lying.")) *> point(age)
+              case None =>
+                writeLine("That's not an age, try again")                 *> ageExplainer2
+              // GOTCHA:
+              // Since this is functional code, writeLine(..) followed by recursive calling ageExplainer2 would throw
+              // the writeLine result away and the code would be equivalent to just ageExplainer2. We need to use the
+              // fish operator to make sure both actions happen, and throw away one result
+    }
+  } yield age
 }
 
 object zio_type {
