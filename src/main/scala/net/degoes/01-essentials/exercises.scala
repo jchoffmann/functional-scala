@@ -57,11 +57,18 @@ object types {
   //
   // Can't do this with Nothing - there are no values of type Nothing
   // Product has to have everything
+
+  //
+  // EXERCISE 7
+  //
+  // Prove that `A * 0` is equivalent to `0` by implementing the following two
+  // functions.
+  //
   def to2[A](t: (A, Nothing)): Nothing = t._2
   def from2[A](n: Nothing): (A, Nothing) = n
 
   //
-  // EXERCISE 7
+  // EXERCISE 8
   //
   // Create a sum type of `Int` and `String` representing the identifier of
   // a robot (a number) or a person (a name).
@@ -79,7 +86,7 @@ object types {
   case object APL extends ProgrammingLanguage
 
   //
-  // EXERCISE 8
+  // EXERCISE 9
   //
   // Prove that `A + 0` is equivalent to `A` by implementing the following two
   // functions.
@@ -93,7 +100,7 @@ object types {
   // Can't do this with Unit - how do you get an A out of Unit???
 
   //
-  // EXERCISE 9
+  // EXERCISE 10
   //
   // Create either a sum type or a product type (as appropriate) to represent a
   // credit card, which has a number, an expiration date, and a security code.
@@ -102,7 +109,7 @@ object types {
   case class CreditCard(number: Int, expiration: String, securityCode: Int)
 
   //
-  // EXERCISE 10
+  // EXERCISE 11
   //
   // Create either a sum type or a product type (as appropriate) to represent a
   // payment method, which could be a credit card, bank account, or
@@ -115,16 +122,16 @@ object types {
   case object CryptoCurrency extends PaymentMethod
 
   //
-  // EXERCISE 11
+  // EXERCISE 12
   //
   // Create either a sum type or a product type (as appropriate) to represent an
-  // employee at a company, which has a title, salary, name, employment date.
+  // employee at a company, which has a title, salary, name, and employment date.
   //
   //type Employee = ???
   case class Employee(title: String, salary: Int, name: String, employmentDate: String)
 
   //
-  // EXERCISE 12
+  // EXERCISE 13
   //
   // Create either a sum type or a product type (as appropriate) to represent a
   // piece on a chess board, which could be a pawn, rook, bishop, knight,
@@ -140,7 +147,7 @@ object types {
   case object King extends ChessPiece
 
   //
-  // EXERCISE 13
+  // EXERCISE 14
   //
   // Create an ADT model of a game world, including a map, a player, non-player
   // characters, different classes of items, and character stats.
@@ -186,6 +193,7 @@ object types {
 object functions {
   type ??? = Nothing
 
+
   //
   // EXERCISE 1
   //
@@ -201,7 +209,7 @@ object functions {
   // Convert the following non-function into a function.
   //
   def arrayUpdate1[A](arr: Array[A], i: Int, f: A => A): Unit =
-    arr.updated(i, f(arr(i)))
+    arr.update(i, f(arr(i)))
   // has a side effect, we should be able to replace it with () ...
   // also partial function (can throw an exception bu choosing a bad index
   // could return new array (problem 1) and return an option or don't change the array (problem 2)
@@ -565,7 +573,8 @@ object higher_kinded {
   type ????[A, B] = Nothing
   type ?????[F[_]] = Nothing
 
-  // Int    : *
+  // Int    : *               // * = { x | x is a type in the Scala type system }
+  //                          //   = { Person, Int, Boolean, String, Tree[Int], Tree[String], Unit, Nothing, ... }
   // List   : * => *          // _[_]
   // Map    : [*, *] => *     // _[_, _]
   // Tuple3 : [*, *, *] => *  // (Int, String, Boolean)
@@ -573,6 +582,8 @@ object higher_kinded {
   // def foo[A](???)       // A has kind *
   // def foo[A[_]](???)    // A has kind * -> *
   // def foo[A[_, _]](???) // A has kind [*, *] => *
+  //
+  // Could also use names: trait Foo[A[X, Y, Z], B, C[X, Y]] but X's and Y's are not relevant, so replace with _
   //
   //def foo[F[_], A](fa: F[A]): F[A] = ??? // F could be Future, List, ...
   case class Foo[F[_], A](fa: F[A]) // Is a type constructor. Kind of foo (figure out iteratively):
@@ -665,7 +676,16 @@ object higher_kinded {
       bind(fa)(f andThen single)
     }
   }
-  val ListCollectionLike: CollectionLike[List] = ???
+  val ListCollectionLike: CollectionLike[List] = new CollectionLike[List] {
+    override def cons[A](a: A, as: List[A]): List[A] = a :: as
+
+    override def empty[A]: List[A] = List.empty[A]
+
+    override def uncons[A](as: List[A]): Option[(A, List[A])] = as match {
+      case Nil => None
+      case x :: xs => Some((x, xs))
+    }
+  }
 
   //
   // EXERCISE 8
@@ -690,9 +710,13 @@ object higher_kinded {
   // parameter to `String`.
   //
   // it is partially applied type constructor, since kind of Map is [*, *] => *
+  // this only works with a compiler plugin for now (kind-projector), or use type lambdas
+  // in Scala 3 we will be able to use _
   val MapSized1: Sized[Map[String, ?]] = new Sized[Map[String, ?]] {
     def size[A](fa: Map[String, A]): Int = fa.size
   }
+  type MapString[V] = Map[String, V] // has kind * -> *
+  MapSized1.size(Map("foo" -> 1, "bar" -> 2))
 
   //
   // EXERCISE 9
@@ -700,7 +724,9 @@ object higher_kinded {
   // Implement `Sized` for `Map`, partially applied with its first type
   // parameter to a user-defined type parameter.
   //
-  // Polymorphic key type - method type polymorphism combined with data type polymorphisn
+  // Polymorphic key type - method type polymorphism combined with data type polymorphism
+  // almost cheating: seems like we have created a Sized for Map,
+  // but due to polymorphism it is a family of Sizes for all choices of K
   def MapSized2[K]: Sized[Map[K, ?]] = new Sized[Map[K, ?]] {
     def size[A](fa: Map[K, A]): Int = fa.size
   }
@@ -716,14 +742,94 @@ object higher_kinded {
   }
 }
 
-object typeclasses {
-  // def sort(list: List[Int]): List[Int]
-  // had too many playing cards (e.g. List[Int])
+// Motivation for type classes: sorting
+object example {
+  // Motivation: sorting
+  def sort(l: List[Int]): List[Int] = l match {
+    case Nil => Nil
+    case x :: xs =>
+      val (lessThan, notLessThan) = xs.partition(_ < x)
+      sort(lessThan) ++ List(x) ++ sort(notLessThan)
+  }
+  // had too many playing cards (e.g. List[Int]), all sorts of things can go wrong (can summon Ints out of thin air)
   // then introduce polymorphism to throw away the “Int” information, but thrown away too much info (can’t sort)
-  // def sort[A](list: List[A]): List[A]
+  //def sort[A](l: List[A]): List[A] = l match {
+  //  case Nil => Nil
+  //  case x :: xs =>
+  //    val (lessThan, notLessThan) = xs.partition(_ < x) // doesn't compile
+  //    sort(lessThan) ++ List(x) ++ sort(notLessThan)
+  //}
   // re-introduce structure, but you need guarantees (transitivity, anti-reflexive)
-  // def sort[A](list: List[A])(lt: (A, A) => Boolean): List[A]
+  def sortAll1[A](l: List[A])(lt: (A, A) => Boolean): List[A] = l match {
+    case Nil => Nil
+    case x :: xs =>
+      val (lessThan, notLessThan) = xs.partition(lt(_, x))
+      sortAll1(lessThan)(lt) ++ List(x) ++ sortAll1(notLessThan)(lt)
+  }
+  // bundle capability and guarantees in trait
+  // pass it around as implicit
+  // then use context bounds
+  // then define apply method to get rid of implicitly
+  // then create implicit Syntax class to re-introduce < syntax, and others in terms of <
 
+  /**
+    * Every type class is a set of three things:
+    *
+    * - Types
+    * - Operations on values of those types
+    * - Laws governing the behaviour of the operations
+    *
+    * Every type class instance (or instance, for short) is an implementation of the type class for a set of given types
+    *
+    */
+  trait LessThan[A] {
+    // `lessThan` must satisfy the transitivity law
+    // `lessThan(a, b) && lessThan(b, c) ==> lessThan(a, c)`
+    def lessThan(left: A, right: A): Boolean
+
+    final def notLessThan(left: A, right: A): Boolean =
+      !lessThan(left, right)
+  }
+  object LessThan {
+    def apply[A](implicit A: LessThan[A]): LessThan[A] = A
+
+    // Put instance in the companion object if you created the type class
+    implicit val LessThanInt: LessThan[Int] = (left: Int, right: Int) => left < right
+  }
+  implicit class LessThanSyntax[A](val l: A) {
+    def < (r: A)(implicit A: LessThan[A]): Boolean = A.lessThan(l, r)
+
+    def >= (r: A)(implicit A: LessThan[A]): Boolean = A.notLessThan(l, r)
+  }
+
+  def sortAll[A: LessThan](l: List[A]): List[A] = l match {
+    case Nil => Nil
+    case x :: xs =>
+      val (lessThan, notLessThan) = xs.partition(_ < x)
+      sortAll(lessThan) ++ List(x) ++ sortAll(notLessThan)
+  }
+
+  sortAll(1 :: 3 :: -1 :: 10 :: 45 :: 7 :: 2 :: Nil)
+
+  case class Person(name: String, age: Int)
+  object Person {
+    // Put your own one in your companion object if you need to provide your own instance
+    implicit val PersonLessThan: LessThan[Person] = (left: Person, right: Person) =>
+      if (left.name < right.name) true
+      else if (left.age < right.age) true
+      else false
+  }
+
+  sortAll(Person("John", 40) :: Nil)
+
+  case class DescendingPerson(person: Person)
+  object DescendingPerson {
+    implicit val DescendingPersonLessThan: LessThan[DescendingPerson] = (left: DescendingPerson, right: DescendingPerson) =>
+      left.person >= right.person // not sure
+  }
+}
+
+object typeclasses {
   /**
    * {{
    * Reflexivity:   a ==> equals(a, a)
@@ -875,6 +981,11 @@ object typeclasses {
       sort2(lessThan) ++ List(x) ++ sort2(notLessThan)
   }
 
+  implicit val OrdSting: Ord[String] = new Ord[String] {
+    override def compare(l: String, r: String): Ordering =
+      if (l < r) LT else if (l > r) GT else EQUAL
+  }
+
   //
   // Scalaz 8 Encoding
   //
@@ -925,16 +1036,20 @@ object typeclasses {
   //
   // EXERCISE 2
   //
-  // Create an instance of the `Semigroup` type class for `java.time.Instant`.
+  // Create an instance of the `Semigroup` type class for `java.time.Duration`.
   //
-  implicit val SemigroupInstant: Semigroup[java.time.Instant] = ???
+  implicit val SemigroupInstant: Semigroup[java.time.Duration] = ???
 
   //
   // EXERCISE 3
   //
   // Create an instance of the `Semigroup` type class for `Int`.
   //
-  implicit val SemigroupInt: Semigroup[Int] = ???
+  implicit val SemigroupInt: Semigroup[Int] = instanceOf(
+    new SemigroupClass[Int] {
+      override def append(l: => Int, r: => Int): Int = l + r
+    }
+  )
 
   //
   // EXERCISE 4
