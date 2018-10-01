@@ -614,24 +614,24 @@ object higher_kinded {
   //
   // EXERCISE 3
   //
-  // Create a new type that has kind `(* -> *) -> *`.
+  // Create a trait with kind `*`.
   //
-  type NewType1[F[_]]
-  type Answer3 = `(* => *) => *`[NewType1]
+  trait Answer3 /*[]*/ // Do nothing, zero params
 
   //
   // EXERCISE 4
   //
-  // Create a trait with kind `*`.
+  // Create a trait with kind `[*, *, *] => *`.
   //
-  trait Answer4 /*[]*/ // Do nothing, zero params
+  trait Answer4[A, B, C] /*[]*/
 
   //
   // EXERCISE 5
   //
-  // Create a trait with kind `[*, *, *] => *`.
+  // Create a new type that has kind `(* -> *) -> *`.
   //
-  trait Answer5[A, B, C] /*[]*/
+  type NewType1[F[_]]
+  type Answer5 = `(* => *) => *`[NewType1]
 
   //
   // EXERCISE 6
@@ -981,10 +981,16 @@ object typeclasses {
       sort2(lessThan) ++ List(x) ++ sort2(notLessThan)
   }
 
-  implicit val OrdSting: Ord[String] = new Ord[String] {
+  //
+  // EXERCISE 2
+  //
+  // Create an instance of `Ord` for the type `String`.
+  //
+  implicit val OrdString: Ord[String] = new Ord[String] {
     override def compare(l: String, r: String): Ordering =
       if (l < r) LT else if (l > r) GT else EQUAL
   }
+
 
   //
   // Scalaz 8 Encoding
@@ -1034,14 +1040,18 @@ object typeclasses {
     def <> (r: => A)(implicit A: Semigroup[A]): A = A.append(l(), r)
   }
   //
-  // EXERCISE 2
+  // EXERCISE 3
   //
   // Create an instance of the `Semigroup` type class for `java.time.Duration`.
   //
-  implicit val SemigroupInstant: Semigroup[java.time.Duration] = ???
+  implicit val SemigroupDuration: Semigroup[java.time.Duration] = instanceOf(
+    new SemigroupClass[java.time.Duration] {
+      override def append(l: => java.time.Duration, r: => java.time.Duration): java.time.Duration = l.plus(r)
+    }
+  )
 
   //
-  // EXERCISE 3
+  // EXERCISE 4
   //
   // Create an instance of the `Semigroup` type class for `Int`.
   //
@@ -1052,14 +1062,18 @@ object typeclasses {
   )
 
   //
-  // EXERCISE 4
+  // EXERCISE 5
   //
   // Create an instance of the `Semigroup` type class for `Set[A]`.
   //
-  implicit def SemigroupSet[A]: Semigroup[Set[A]] = ???
+  implicit def SemigroupSet[A]: Semigroup[Set[A]] = instanceOf(
+    new SemigroupClass[Set[A]] {
+      override def append(l: => Set[A], r: => Set[A]): Set[A] = l ++ r
+    }
+  )
 
   //
-  // EXERCISE 5
+  // EXERCISE 6
   //
   // Create an instance of the `Semigroup` type class for `Map[K, ?]`. Hint:
   // you will need some constraint applied to the values.
@@ -1068,7 +1082,7 @@ object typeclasses {
     ???
 
   //
-  // EXERCISE 6
+  // EXERCISE 7
   //
   // Create a type class `Monoid[A]` that implies `Semigroup[A]` (that is, every
   // `Monoid[A]` must be a `Semigroup[A]`), which adds a single operation called
@@ -1092,35 +1106,35 @@ object typeclasses {
   def empty[A: Monoid]: A = ???
 
   //
-  // EXERCISE 7
+  // EXERCISE 8
   //
-  // Create an instance of the `Monoid` type class for `java.time.Instant`.
+  // Create an instance of the `Monoid` type class for `java.time.Duration`.
   //
-  implicit val MonoidInstant: Monoid[java.time.Instant] = ???
+  implicit val MonoidInstant: Monoid[java.time.Duration] = ???
 
   //
-  // EXERCISE 8
+  // EXERCISE 9
   //
   // Create an instance of the `Monoid` type class for `String`.
   //
   implicit val MonoidString: Monoid[String] = ???
 
   //
-  // EXERCISE 9
+  // EXERCISE 10
   //
   // Create an instance of the `Monoid` type class for `List[A]`.
   //
   implicit def MonoidList[A]: Monoid[List[A]] = ???
 
   //
-  // EXERCISE 10
+  // EXERCISE 11
   //
   // Create an instance of the `Monoid` type class for `Int`.
   //
   implicit val MonoidInt: Monoid[Int] = ???
 
   //
-  // EXERCISE 11
+  // EXERCISE 12
   //
   // Using a newtype, create an instance of the `Monoid` type class for `Int`
   // representing the additive monoid, with addition as `append`, and 0 as
@@ -1130,7 +1144,7 @@ object typeclasses {
   implicit val MonoidSum: Monoid[Sum] = ???
 
   //
-  // EXERCISE 12
+  // EXERCISE 13
   //
   // Using a newtype, create an instance of the `Monoid` type class for `Int`
   // representing the multiplicative monoid, with multiplication as `append`,
@@ -1140,7 +1154,7 @@ object typeclasses {
   implicit val MonoidProduct: Monoid[Product] = ???
 
   //
-  // EXERCISE 13
+  // EXERCISE 14
   //
   // Create an instance of the `Collection` type class for `List`.
   //
