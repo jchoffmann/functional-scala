@@ -57,6 +57,8 @@ object types {
   //
   // Can't do this with Nothing - there are no values of type Nothing
   // Product has to have everything
+  def to2[A](t: (A, Nothing)): Nothing = t._2
+  def from2[A](n: Nothing): (A, Nothing) = n
 
   //
   // EXERCISE 7
@@ -82,11 +84,11 @@ object types {
   // Prove that `A + 0` is equivalent to `A` by implementing the following two
   // functions.
   //
-  def to2[A](t: Either[A, Nothing]): A = t match {
+  def to3[A](t: Either[A, Nothing]): A = t match {
     case Left(a) => a
     case Right(n) => n // cannot exist, there are no values of type nothing; compiler will complain
   }
-  def from2[A](a: A): Either[A, Nothing] = Left(a)
+  def from3[A](a: A): Either[A, Nothing] = Left(a)
   //
   // Can't do this with Unit - how do you get an A out of Unit???
 
