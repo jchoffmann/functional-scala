@@ -514,6 +514,104 @@ object functor {
   }
 }
 
+object parser {
+  //
+  // EXERCISE 1
+  //
+  // Implement all missing methods for parser.
+  //
+  case class Parser[+E, +A](run: String => Either[E, (String, A)]) { self =>
+    def ~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, (A, B)] =
+      self.flatMap(a => that.map(b => (a, b)))
+
+    def ~> [E1 >: E, B](that: Parser[E1, B]): Parser[E1, B] =
+      (self ~ that).map(_._2)
+
+    def <~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, A] =
+      (self ~ that).map(_._1)
+
+    def map[B](f: A => B): Parser[E, B] =
+      flatMap(f.andThen(Parser.point[B](_)))
+
+    def flatMap[E1 >: E, B](f: A => Parser[E1, B]): Parser[E1, B] =
+      Parser[E1, B](input =>
+        self.run(input) match {
+          case Left(e) => Left(e)
+          case Right((input, a)) => f(a).run(input)
+        })
+
+    def orElse[E1 >: E, B](that: Parser[E1, B]): Parser[E1, Either[A, B]] = {
+      val self1 = self.map(Left(_))
+      val that1 = that.map(Right(_))
+
+      type Return = Either[E1, (String, Either[A, B])]
+
+      Parser(i => self1.run(i).fold[Return](_ => that1.run(i), Right(_)))
+    }
+
+    def filter[E1 >: E](e0: E1)(f: A => Boolean): Parser[E1, A] =
+      Parser(input =>
+        self.run(input) match {
+          case Left(e) => Left(e)
+          case Right((input, a)) => if (f(a)) Right((input, a)) else Left(e0)
+        })
+
+    def | [E1 >: E, A1 >: A](that: Parser[E1, A1]): Parser[E1, A1] =
+      (self orElse (that)).map(_.merge)
+
+    def rep: Parser[E, List[A]] =
+      ((self.map(List(_)) | Parser.point[List[A]](Nil)) ~ rep).map(t => t._1 ++ t._2)
+    //       ^ functor      ^ applicative               ^ apply (zip)
+
+    def ? : Parser[E, Option[A]] = self.map(Some(_)) | Parser.point(None)
+  }
+  object Parser {
+    def fail[E](e: E): Parser[E, Nothing] =
+      Parser(input => Left(e))
+
+    def point[A](a: => A): Parser[Nothing, A] =
+      Parser(input => Right((input, a)))
+
+    def maybeChar: Parser[Nothing, Option[Char]] =
+      Parser(input =>
+        if (input.length == 0) Right((input, None))
+        else Right((input.drop(1), Some(input.charAt(0)))))
+
+    def char[E](e: E): Parser[E, Char] =
+      Parser(input =>
+        if (input.length == 0) Left(e)
+        else Right((input.drop(1), input.charAt(0))))
+
+    def digit[E](e: E): Parser[E, Int] =
+      for {
+        c <- char(e)
+        option = scala.util.Try(c.toString.toInt).toOption
+        d <- option.fold[Parser[E, Int]](Parser.fail(e))(point(_))
+      } yield d
+
+    def literal[E](f: Char => E)(c0: Char): Parser[E, Char] =
+      for {
+        c <- char(f(c0))
+        _ <- if (c != c0) Parser.point(f(0)) else Parser.point(())
+      } yield c
+
+    def whitespace: Parser[Nothing, Unit] =
+      Parser(input => Right((input.dropWhile(_ == ' '), ())))
+  }
+
+  // [1,2,3,]
+  sealed trait Error
+  case class ExpectedLit(char: Char) extends Error
+  case object ExpectedDigit extends Error
+
+  val parser: Parser[Error, List[Int]] =
+    for {
+      _       <- Parser.literal(ExpectedLit)('[')
+      digits  <- (Parser.digit(ExpectedDigit) <~ Parser.literal(ExpectedLit)(',')).rep
+      _       <- Parser.literal(ExpectedLit)(']')
+    } yield digits
+}
+
 // Functor      - Gives us the power to map values produced by programs without changing their structure
 // Apply         - Adds the power to combine two programs into one by combining their values
 // Applicative - Adds the power to produce a “pure” program that produces a given result
@@ -527,6 +625,29 @@ object foldable {
   //while (it.hasNext) {
   //  it.next
   //}
+  //trait Foldable[F[_]] {
+  //  def foldMap[A, B: Monoid](fa: F[A])(f: A => B): B
+  //  def foldRight[A, B](fa: F[A], z: => B)(f: (A, => B) => B): B
+  //}
+
+  //
+  // EXERCISE 0
+  //
+  // Define an instance of 'Foldable' for 'List'
+  //
+  implicit val FoldableList: Foldable[List] = new Foldable[List] {
+    def foldMap[A, B](fa: List[A])(f: A => B)(implicit F: Monoid[B]): B =
+      fa match {
+        case Nil => mzero[B]
+        case a :: as => f(a) |+| foldMap(as)(f)
+      }
+
+    def foldRight[A, B](fa: List[A], z: => B)(f: (A, => B) => B): B =
+      fa match {
+        case Nil => z
+        case a :: as => f(a, foldRight(as, z)(f))
+      }
+  }
 
   //
   // EXERCISE 1
@@ -563,6 +684,7 @@ object foldable {
     override def foldRight[A, B](fa: C => A, z: => B)(f: (A, => B) => B): B = z
   }
   // This instance is not useful, there is no way to fold over the values of the function because we don't know; and we don't have as
+  // Moral of the story: You can't fold over return values of functions, only data structures
 
   //
   // EXERCISE 3
@@ -596,7 +718,7 @@ object foldable {
   // Try to define an instance of `Traverse` for `Parser[E, ?]`.
   //
   case class Parser[+E, +A](run: String => Either[E, (String, A)])
-  implicit def TraverseParser[E]: Traverse[Parser[E, ?]] = ??? // can't do it :o)
+  implicit def TraverseParser[E]: Traverse[Parser[E, ?]] = ??? // can't do it :o), parsers are not traversable
 }
 
 object optics {
@@ -665,9 +787,9 @@ object optics {
                                get: S => A,
                                set: A => (S => S)
                              ) { self =>
-    def >>> [B](that: Lens[A, B]): Lens[S, B] = // Compose lenses
+    def >>>[B](that: Lens[A, B]): Lens[S, B] = // Compose lenses
       Lens[S, B](
-        get = (s: S) => that.get(self.get(s)),
+        get = (s: S) => self.get.andThen(that.get)(s), // that.get(self.get(s))
         set = (b: B) => (s: S) => self.set(that.set(b)(self.get(s)))(s)
       )
 
@@ -697,12 +819,17 @@ object optics {
     def >>> [B](that: Prism[A, B]): Prism[S, B] =
       Prism(
         get = (s: S) => self.get(s).flatMap(that.get),
-        set = self.set.compose(that.set)
+        set = that.set.andThen(self.set)
       )
 
     final def select(implicit ev: Unit =:= A): S =
       set(ev(()))
+    // ev makes sure A is of type Unit
+    // so you can only select on Prism's whose substructure is a Unit, just like the USA example
   }
+
+  // select: helper function
+  val country: Country = Country.usa.select
 
   //
   // EXERCISE 4
@@ -720,6 +847,9 @@ object optics {
       case Right(b) => Some(b)
       case _ => None
     }, Right(_))
+
+  _Left.set(1)
+  _Left.get(Right(2))
 
   // Optic[S, T, A, B] // Super structure S => T, sub structure from A => B
 
