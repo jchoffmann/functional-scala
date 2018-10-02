@@ -53,6 +53,7 @@ object algebra {
   //}
   //trait Monoid[F] extends Semigroup[F] { self =>
 
+  implicit def OptionMonoid[A: Semigroup]: Monoid[Option[A]] = ???
 
   //
   // EXERCISE 2
