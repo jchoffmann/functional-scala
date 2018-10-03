@@ -2,8 +2,11 @@
 
 package net.degoes.effects
 
+import java.io.IOException
+
 import scalaz.zio._
 import scalaz.zio.console._
+
 import scala.concurrent.duration._
 
 object notepad {
@@ -755,12 +758,13 @@ object zio_concurrency {
   val interrupted1: IO[Nothing, Unit] =
     for {
       fiber <- fibonacci(10000).fork
+      _     <- fiber.interrupt
     } yield ()
 
   //
   // EXERCISE 8
   //
-  // Use the `seqWith` method of the `Fiber` object to combine `fiber1` and
+  // Use the `zipWith` method of the `Fiber` object to combine `fiber1` and
   // `fiber2` into a single fiber (by summing the results), so they can be
   // interrupted together.
   //
@@ -768,9 +772,10 @@ object zio_concurrency {
     for {
       fiber1 <- fibonacci(10).fork
       fiber2 <- fibonacci(20).fork
-      both   = fiber1.zipWith(fiber2)(_ + _) // everything on the RHS of the arrow needs to be in the IO monad
+      both   = (fiber1.zipWith(fiber2)(_ + _) : Fiber[Nothing, Int]) // everything on the RHS of the arrow needs to be in the IO monad
       _      <- both.interrupt
     } yield ()
+  // you can treat a bunch of fibers as a single logical fiber
 
   //
   // EXERCISE 9
@@ -932,9 +937,9 @@ object zio_schedule {
     def ? = ???
   }
 
-  // Schedule[A, B] // A is input:
-  // IO.repeat // feeds in the values from the successful IO
-  // IO.retry  // feeds in the errors from the failed IO
+  // Schedule[A, B] // Consumes As, produces Bs, at each step decide, there is a delay
+  // IO.repeat // repeat succeeding actions, feeds in the values from the successful IO
+  // IO.retry  // retry flaky actions,       feeds in the errors from the failed IO
 
   //def makeRequest(input: Request): IO[Exception, Response] = ???
   //val io2 = makeRequest(Request())
@@ -956,7 +961,7 @@ object zio_schedule {
   // Using the `repeat` method of the `IO` object, repeat printing "Hello World"
   // five times to the console.
   //
-  val repeated1 = putStrLn("Hello World").repeat(Schedule.recurs(5))
+  val repeated1 = putStrLn("Hello World") repeat fiveTimes
 
   //
   // EXERCISE 3
@@ -975,7 +980,7 @@ object zio_schedule {
   // every second.
   //
   val fiveTimesEverySecond =
-    fiveTimes && everySecond // chooses the maximum delay
+    fiveTimes && everySecond // chooses the maximum delay between them
 
   //
   // EXERCISE 5
@@ -983,7 +988,7 @@ object zio_schedule {
   // Using the `repeat` method of the `IO` object, repeat the action
   // putStrLn("Hi hi") using `fiveTimesEverySecond`.
   //
-  val repeated2 = putStrLn("Hi hi").repeat(fiveTimesEverySecond)
+  val repeated2 = putStrLn("Hi hi") repeat fiveTimesEverySecond
 
   //
   // EXERCISE 6
@@ -1002,7 +1007,7 @@ object zio_schedule {
   // a total of five times.
   //
   val error1 = IO.fail("Uh oh!")
-  val retried5 = error1 ?
+  val retried5 = error1 retry fiveTimes
 
   //
   // EXERCISE 8
@@ -1209,10 +1214,10 @@ object zio_promise {
   // produce a `String`.
   //
   val interrupted: IO[Nothing, Boolean] =
-  for {
-    promise   <- Promise.make[Error, String]
-    completed <- (promise.interrupt(new Error) : IO[Nothing, Boolean])
-  } yield completed
+    for {
+      promise   <- Promise.make[Error, String]
+      completed <- (promise.interrupt(new Error) : IO[Nothing, Boolean])
+    } yield completed
 
   //
   // EXERCISE 6
@@ -1223,7 +1228,7 @@ object zio_promise {
   val handoff1: IO[Nothing, Int] =
     for {
       promise <- Promise.make[Nothing, Int]
-      _       <- promise.complete(42).delay(10.milliseconds).fork // complete the promise (delayed) in abother Fiber
+      _       <- promise.complete(42).delay(10.milliseconds).fork // complete the promise (delayed) in another Fiber
       value   <- (promise.get : IO[Nothing, Int])
     } yield value
   // get will suspend until the Promise is completed
@@ -1253,11 +1258,6 @@ object zio_promise {
      _       <- promise.interrupt.delay(10.milliseconds).fork
      value   <- (promise.get : IO[Error, Int])
    } yield value
-    for {
-      promise <- Promise.make[Error, Int]
-      _       <- promise.interrupt.delay(10.milliseconds).fork
-      value   <- (promise ? : IO[Nothing, Int])
-    } yield value
 }
 
 object zio_queue {
@@ -1279,45 +1279,10 @@ object zio_queue {
   // Using the `offer` method of `Queue`, place an integer value into a queue.
   //
   val offered1: IO[Nothing, Unit] =
-    for {
-      queue <- makeQueue
-      _     <- (queue.offer(42) : IO[Nothing, Unit])
-    } yield ()
-
-  //
-  // EXERCISE 3
-  //
-  // Using the `take` method of `Queue`, take an integer value frin a queue.
-  //
-  val taken1: IO[Nothing, Int] =
-      queue <- makeQueue
-      _     <- (queue.offer(42) : IO[Nothing, Unit])
-      value <- (queue.take : IO[Nothing, Int])
-
-object zio_queue {
-  implicit class FixMe[A](a: A) {
-    def ? = ???
-  }
-
-  //
-  // EXERCISE 1
-  //
-  // Using the `Queue.bounded`, create a queue for `Int` values with a capacity
-  // of 10.
-  //
-  val makeQueue: IO[Nothing, Queue[Int]] =
-    ???
-
-  //
-  // EXERCISE 2
-  //
-  // Using the `offer` method of `Queue`, place an integer value into a queue.
-  //
-  val offered1: IO[Nothing, Unit] =
-    for {
-      queue <- makeQueue
-      _     <- (queue ? : IO[Nothing, Unit])
-    } yield ()
+  for {
+    queue <- makeQueue
+    _     <- (queue.offer(42) : IO[Nothing, Unit])
+  } yield ()
 
   //
   // EXERCISE 3
@@ -1325,11 +1290,11 @@ object zio_queue {
   // Using the `take` method of `Queue`, take an integer value from a queue.
   //
   val taken1: IO[Nothing, Int] =
-    for {
-      queue <- makeQueue
-      _     <- queue.offer(42)
-      value <- (queue ? : IO[Nothing, Int])
-    } yield value
+  for {
+    queue <- makeQueue
+    _ <- (queue.offer(42): IO[Nothing, Unit])
+    value <- (queue.take: IO[Nothing, Int])
+  } yield value
 
   //
   // EXERCISE 4
@@ -1365,31 +1330,42 @@ object zio_queue {
   // Using `Queue`, `Ref`, and `Promise`, implement an "actor" like construct
   // that can atomically update the values of a counter.
   //
+  case class Increment(amount: Int)
   val makeCounter: IO[Nothing, Int => IO[Nothing, Int]] =
+  //                           ^ the actor is just a function, in this case a counter
+  //                             (no contamination of the implementation into the interface)
+  //                             (also this is overkill, for a counter you'd just need Ref[Int])
     for {
       counter <- Ref(0)
-      queue   <- Queue.bounded[(Int, Promise[Nothing, Int])](100)
-                // consume from the queue and update the counter and complete the promise to indicate
+      mailbox <- Queue.bounded[(Int, Promise[Nothing, Int])](100) // ._1 == input message, ._2 == promise for the output
+                // consume from the backpressured queue and update the counter and complete the promise to indicate
                 // we have finished with the element we have pulled from the queue
-      _       <- queue.take.flatMap {
+      _       <- mailbox.take.flatMap {
                      case (amount, promise) =>
                        counter.update(_ + amount).flatMap(promise.complete)
                    }
                    .forever
                    .fork: IO[Nothing, Fiber[Nothing, Nothing]]
-    } yield { (amount: Int) =>
-      for {
-        promise <- Promise.make[Nothing, Int]
-        _       <- queue.offer((amount, promise))
-        value   <- promise.get
-      } yield value
+    } yield { // we yield a function for a way to send messages to the actor, let it do the work and get the updated value
+              // only the actor deals with the Ref and communicates back with us (this piece of code below) the updated Ref value
+              // using the Promise
+      (amount: Int) =>
+        for {
+          promise <- Promise.make[Nothing, Int]
+          _       <- mailbox.offer((amount, promise))
+          value   <- promise.get
+        } yield value
     }
+  // you don't need a framework (akka) to get this type of functionality
+  // this is type safe
+  // this only expects a function
+  // this is fast
 
   val counterExample: IO[Nothing, Int] =
     for {
       counter <- makeCounter
-      _       <- IO.parAll(List.fill(100)(IO.traverse(0 to 100)(counter)))
-      value   <- counter(0)
+      _       <- IO.parAll(List.fill(100)(IO.traverse(0 to 100)(counter))) // a program with 100 instructions, 100 fibres in parallel calling increment
+      value   <- counter(0)  // this is just for testing the counter and get the value out
     } yield value
 }
 
