@@ -932,7 +932,15 @@ object zio_schedule {
     def ? = ???
   }
 
-  // Schedule[A, B]
+  // Schedule[A, B] // A is input:
+  // IO.repeat // feeds in the values from the successful IO
+  // IO.retry  // feeds in the errors from the failed IO
+
+  //def makeRequest(input: Request): IO[Exception, Response] = ???
+  //val io2 = makeRequest(Request())
+  //io2 orElse io2 orElse io2 // retry
+  //instead: io.retry(schedule)
+  //         io.repeat(schedule)
 
   //
   // EXERCISE 1
@@ -940,7 +948,7 @@ object zio_schedule {
   // Using `Schedule.recurs`, create a schedule that recurs 5 times.
   //
   val fiveTimes: Schedule[Any, Int] =
-    ???
+    Schedule.recurs(5) // also no delay between steps
 
   //
   // EXERCISE 2
@@ -948,7 +956,7 @@ object zio_schedule {
   // Using the `repeat` method of the `IO` object, repeat printing "Hello World"
   // five times to the console.
   //
-  val repeated1 = putStrLn("Hello World")
+  val repeated1 = putStrLn("Hello World").repeat(Schedule.recurs(5))
 
   //
   // EXERCISE 3
@@ -957,7 +965,7 @@ object zio_schedule {
   // second.
   //
   val everySecond: Schedule[Any, Int] =
-    ???
+    Schedule.spaced(1.second)
 
   //
   // EXERCISE 4
@@ -966,7 +974,8 @@ object zio_schedule {
   // and the `everySecond` schedule, create a schedule that repeats fives times,
   // every second.
   //
-  val fiveTimesEverySecond = ???
+  val fiveTimesEverySecond =
+    fiveTimes && everySecond // chooses the maximum delay
 
   //
   // EXERCISE 5
@@ -974,7 +983,7 @@ object zio_schedule {
   // Using the `repeat` method of the `IO` object, repeat the action
   // putStrLn("Hi hi") using `fiveTimesEverySecond`.
   //
-  val repeated2 = ???
+  val repeated2 = putStrLn("Hi hi").repeat(fiveTimesEverySecond)
 
   //
   // EXERCISE 6
@@ -983,7 +992,8 @@ object zio_schedule {
   // schedule, and the `everySecond` schedule, create a schedule that repeats
   // fives times rapidly, and then repeats every second forever.
   //
-  val fiveTimesThenEverySecond = ???
+  val fiveTimesThenEverySecond =
+    fiveTimes andThen everySecond // 5 times right in a row really fast, then fall back to different strategy
 
   //
   // EXERCISE 7
@@ -997,11 +1007,12 @@ object zio_schedule {
   //
   // EXERCISE 8
   //
-  // Using the `&&` method of the `Schedule` object, the `fiveTimes` schedule,
+  // Using the `||` method of the `Schedule` object, the `fiveTimes` schedule,
   // and the `everySecond` schedule, create a schedule that repeats the minimum
   // of five times and every second.
   //
-  val fiveTimesOrEverySecond = ???
+  val fiveTimesOrEverySecond =
+    fiveTimes || everySecond // uses minimum of the durations between them
 
   //
   // EXERCISE 9
@@ -1012,7 +1023,10 @@ object zio_schedule {
   // only do that for up to 100 times, and produce a list of the results.
   //
   def mySchedule[A]: Schedule[A, List[A]] =
-    ???
+    (
+      (Schedule.exponential(10.milliseconds).whileValue(_ < 60.seconds)) andThen // works because exponential returns the delay between steps (not the total duration since the beginning)
+      (Schedule.fixed(60.seconds) && Schedule.recurs(100))
+    ).jittered *> (Schedule.identity[A].collect : Schedule[A, List[A]])
 }
 
 object zio_interop {
@@ -1301,10 +1315,7 @@ object zio_queue {
     for {
       queue <- makeQueue
       _     <- (queue.take.flatMap(i => putStrLn(i.toString).attempt.void).forever : IO[Nothing, Nothing]).fork
-      vs    <- {
-        // (1 to 100).map(queue.offer(_))
-        (queue ? : IO[Nothing, List[Int]])
-      }
+      vs    <- (IO.sequence((1 to 100).map(i => queue.offer(i).map(_ => i))) : IO[Nothing, List[Int]])
     } yield vs
   // concurrent access
 
