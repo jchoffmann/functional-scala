@@ -113,15 +113,17 @@ object algebra {
 
   // Newtypes:
   // Int has 2 Semigroups, not good (multiple implicits, force users to import etc...terrible)
-  implicit val IntSemigroup1: Semigroup[Int] = (l, r) => l + r
-  implicit val IntSemigroup2: Semigroup[Int] = (l, r) => l * r
+  implicit val IntSemigroupAdd: Semigroup[Int] = (l, r) => l + r
+  implicit val IntSemigroupMul: Semigroup[Int] = (l, r) => l * r
   // Solve:
   class Add(val value: Int) extends AnyVal // Lightweight wrappers
   object Add { def apply(value: Int) = new Add(value) }
   class Mul(val value: Int) extends AnyVal
   object Mul { def apply(value: Int) = new Mul(value) }
-  implicit val IntSemigroup3: Semigroup[Add] = (l, r) => Add(l.value + r.value)
-  implicit val IntSemigroup4: Semigroup[Mul] = (l, r) => Mul(l.value * r.value)
+
+  implicit val IntSemigroup1: Semigroup[Add] = (l, r) => Add(l.value + r.value)
+  implicit val IntSemigroup2: Semigroup[Mul] = (l, r) => Mul(l.value * r.value)
+
   Add(1) |+| Add(2)
   Mul(1) |+| Mul(2)
   // Haskell(?): newtype, only exists at compile time, not at runtime
@@ -780,7 +782,7 @@ object foldable {
   //
   // EXERCISE 2
   //
-  // Try to define an instance of `Foldable` for `A => ?`.
+  // Try to define an instance of `Foldable` for `A0 => ?`.
   //
   implicit def FunctionFoldable[C]: Foldable[C => ?] = new Foldable[C => ?] {
     override def foldMap[A, B](fa: C => A)(f: A => B)(implicit F: Monoid[B]): B = mzero[B]

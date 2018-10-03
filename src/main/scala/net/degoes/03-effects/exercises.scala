@@ -66,20 +66,18 @@ object notepad {
 
 object zio_background {
   sealed trait Program[A] { self =>
-    final def *> [B](that: Program[B]): Program[B] =
-      self.flatMap(_ => that)
-    final def <* [B](that: Program[B]): Program[A] =
-      self.flatMap(a => that.map(_ => a))
+    final def *> [B](that: Program[B]): Program[B] = self.zip(that).map(_._2)
+
+    final def <* [B](that: Program[B]): Program[A] = self.zip(that).map(_._1)
 
     final def map[B](f: A => B): Program[B] =
-      self match {
-        case Program.ReadLine(next) =>
-          Program.ReadLine(input => next(input).map(f))
-        case Program.WriteLine(line, next) =>
-          Program.WriteLine(line, next.map(f))
-        case Program.Return(value) =>
-          Program.Return(() => f(value()))
-      }
+      flatMap(f andThen (Program.point(_)))
+
+    final def zip[B](that: Program[B]): Program[(A, B)] =
+      for {
+        a <- self
+        b <- that
+      } yield (a, b)
 
     final def flatMap[B](f: A => Program[B]): Program[B] =
       self match {
@@ -133,7 +131,7 @@ object zio_background {
   // Rewrite `yourName2` using the helper function `getName`, which shows how
   // to create larger programs from smaller programs.
   //
-  def yourName3: Program[Unit] =
+  val yourName3: Program[Unit] =
     for {
       name <- getName
       _    <- writeLine("Hello, " + name + ", good to meet you!")
@@ -192,7 +190,6 @@ object zio_background {
 
         ageExplainer1()
     }
-
   }
   def ageExplainer2: Program[Int] = // was: Program[Unit], but Program[Int] more interesting
     for {
@@ -452,8 +449,7 @@ object zio_failure {
   // represents a failure with a string error message, containing a user-
   // readable description of the failure.
   //
-  val stringFailure1: IO[String, Int] =
-    ???
+  val stringFailure1: IO[String, Int] = ???
 
   //
   // EXERCISE 2
@@ -582,6 +578,7 @@ object zio_effects {
   // import it into the world of pure functional programming.
   //
   import java.io.IOException
+  def readFile3(file: File): IO[IOException, List[String]] =
 
   def readFile3(file: File): IO[IOException, List[String]] =
     IO.syncCatch(Source.fromFile(file).getLines.toList) {
