@@ -1253,6 +1253,11 @@ object zio_promise {
      _       <- promise.interrupt.delay(10.milliseconds).fork
      value   <- (promise.get : IO[Error, Int])
    } yield value
+    for {
+      promise <- Promise.make[Error, Int]
+      _       <- promise.interrupt.delay(10.milliseconds).fork
+      value   <- (promise ? : IO[Nothing, Int])
+    } yield value
 }
 
 object zio_queue {
@@ -1285,10 +1290,45 @@ object zio_queue {
   // Using the `take` method of `Queue`, take an integer value frin a queue.
   //
   val taken1: IO[Nothing, Int] =
-    for {
       queue <- makeQueue
       _     <- (queue.offer(42) : IO[Nothing, Unit])
       value <- (queue.take : IO[Nothing, Int])
+
+object zio_queue {
+  implicit class FixMe[A](a: A) {
+    def ? = ???
+  }
+
+  //
+  // EXERCISE 1
+  //
+  // Using the `Queue.bounded`, create a queue for `Int` values with a capacity
+  // of 10.
+  //
+  val makeQueue: IO[Nothing, Queue[Int]] =
+    ???
+
+  //
+  // EXERCISE 2
+  //
+  // Using the `offer` method of `Queue`, place an integer value into a queue.
+  //
+  val offered1: IO[Nothing, Unit] =
+    for {
+      queue <- makeQueue
+      _     <- (queue ? : IO[Nothing, Unit])
+    } yield ()
+
+  //
+  // EXERCISE 3
+  //
+  // Using the `take` method of `Queue`, take an integer value from a queue.
+  //
+  val taken1: IO[Nothing, Int] =
+    for {
+      queue <- makeQueue
+      _     <- queue.offer(42)
+      value <- (queue ? : IO[Nothing, Int])
     } yield value
 
   //
@@ -1323,7 +1363,7 @@ object zio_queue {
   // EXERCISE 6
   //
   // Using `Queue`, `Ref`, and `Promise`, implement an "actor" like construct
-  // that can atomically update the values of a counter
+  // that can atomically update the values of a counter.
   //
   val makeCounter: IO[Nothing, Int => IO[Nothing, Int]] =
     for {
@@ -1351,7 +1391,6 @@ object zio_queue {
       _       <- IO.parAll(List.fill(100)(IO.traverse(0 to 100)(counter)))
       value   <- counter(0)
     } yield value
-
 }
 
 object zio_rts {
