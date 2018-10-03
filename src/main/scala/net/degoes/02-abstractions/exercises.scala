@@ -113,14 +113,24 @@ object algebra {
 }
 
 object functor {
+  /**
+   * Identity Law
+   *   map(fa, identity) == fa
+   *
+   * Composition Law
+   *   map(map(fa, g), f) == map(fa, f.compose(g))
+   */
+
+  val Numbers  = List(12, 123, 0, 123981)
+  val Expected = List( 2,   3, 1,      6)
+  val g : Int => String = (i: Int) => i.toString
+  val f : String => Int = (s: String) => s.length
+  Numbers.map(g andThen f) == Numbers.map(g).map(f)
+
   // String can't be a functor - wrong kind *
   // Can be: Option, Vector - kind * -> * (Set is not a functor, see later)
   // Map can't be by parameterizing over the key type
 
-  /**
-    * Identity:    fmap(identity) === identity
-    * Composition: fmap(f.compose(g)) === fmap(f).compose(fmap(g))
-    */
   //trait Functor[F[_]] {
   //  def map[A, B](fa: F[A])(f: A => B): F[B]
   //  // Equivalent but nicer and easier to understand (implemented in terms of map):
@@ -211,13 +221,78 @@ object functor {
   // Define an instance of `Functor` for Parser[E, ?].
   //
   case class Parser[+E, +A](run: String => Either[E, (String, A)])
-  implicit def ParserFunctor[E]: Functor[Parser[E, ?]] = new Functor[Parser[E, ?]] {
-    override def map[A, B](fa: Parser[E, A])(f: A => B): Parser[E, B] =
-      Parser(input => fa.run(input) match {
-        case Left(e) => Left(e): Either[E, (String, B)]
-        case Right((input, a)) => Right((input, f(a))): Either[E, (String, B)]
-      })
+  object Parser {
+    def fail[E](e: E): Parser[E, Nothing] =
+      Parser(input => Left(e))
+
+    def point[A](a: => A): Parser[Nothing, A] =
+      Parser(input => Right((input, a)))
+
+    def char[E](e: E): Parser[E, Char] =
+      Parser(input =>
+        if (input.length == 0) Left(e)
+        else Right((input.drop(1), input.charAt(0))))
+
+    implicit def ParserFunctor[E]: Functor[Parser[E, ?]] =
+      new Functor[Parser[E, ?]] {
+        def map[A, B](fa: Parser[E, A])(f: A => B): Parser[E, B] =
+          Parser(input => fa.run(input) match {
+            case Left(e) => Left(e): Either[E, (String, B)]
+            case Right((input, a)) => Right((input, f(a))): Either[E, (String, B)]
+          })
+      }
   }
+
+  trait Zip[F[_]] extends Functor[F] {
+    def zip[A, B](l: F[A], r: F[B]): F[(A, B)]
+  }
+  implicit class ZipSyntax[F[_], A](left: F[A]) {
+    def zip[B](right: F[B])(implicit F: Zip[F]): F[(A, B)] =
+      F.zip(left, right)
+  }
+
+  sealed trait BankTransaction[+A]
+  case class Return[A](value: A) extends BankTransaction[A]
+  case class Deposit[A](amount: BigDecimal, next: BigDecimal => BankTransaction[A]) extends BankTransaction[A]
+  case class Withdraw[A](amount: BigDecimal, next: BigDecimal => BankTransaction[A]) extends BankTransaction[A]
+  object BankTransaction {
+    implicit val FunctorBankTransaction: Functor[BankTransaction] with Zip[BankTransaction] =
+      new Functor[BankTransaction] with Zip[BankTransaction] {
+        def map[A, B](fa: BankTransaction[A])(f: A => B): BankTransaction[B] =
+          fa match {
+            case Return(value) => Return(f(value))
+            case Deposit(amount, next) => Deposit(amount, (b: BigDecimal) => next(b).map(f))
+            case Withdraw(amount, next) => Withdraw(amount, (b: BigDecimal) => next(b).map(f))
+          }
+
+        def zip[A, B](l: BankTransaction[A], r: BankTransaction[B]): BankTransaction[(A, B)] = {
+          val nested: BankTransaction[BankTransaction[(A, B)]] = l.map(a => r.map(b => (a, b)))
+
+          def flatten[C](v: BankTransaction[BankTransaction[C]]): BankTransaction[C] =
+            v match {
+              case Return(t) => t
+              case Deposit(amount, next) => Deposit(amount, (b: BigDecimal) => flatten(next(b)))
+              case Withdraw(amount, next) => Withdraw(amount, (b: BigDecimal) => flatten(next(b)))
+            }
+
+          flatten(nested)
+        }
+      }
+  }
+  val t1 : BankTransaction[BigDecimal] = ???
+  val t2 : BankTransaction[String] = t1.map(d => d.toString)
+
+  val supplier1 : BankTransaction[BigDecimal] = ???
+  val supplier2 : BankTransaction[BigDecimal] = ???
+  val allSuppliers : BankTransaction[(BigDecimal, BigDecimal)] =
+    supplier1.zip(supplier2)
+
+  trait HttpHeader
+  val Headers : Parser[Exception, List[HttpHeader]] = ???
+  val Body    : Parser[Exception, String] = ???
+  val Content : Parser[Exception, (List[HttpHeader], String)] = ???
+
+  def zip[E, A, B](l: Parser[E, A], r: Parser[E, B]): Parser[E, (A, B)] = ???
 
   //
   // EXERCISE 4
@@ -265,6 +340,8 @@ object functor {
   // EXERCISE 7
   //
   // Define an instance of `Functor` for `FunctorNest`.
+  // e.g. Future[Option[A]], Future[Either[Error, Option[A]]]
+  // Future[List[Either[Error, Option[A]]]]
   //
   case class FunctorNest[F[_], G[_], A](run: F[G[A]])
   implicit def FunctorNestFunctor[F[_]: Functor, G[_]: Functor]:
@@ -397,7 +474,8 @@ object functor {
   //
   // Bonus: Implement `ap2` in terms of `zip`.
   //
-  val example1 = (Option(3) |@| Option(5))((_, _))  // ((a, b) => (a, b) takes two things and returns a tuple of two things
+  val example1 = (Option(3) |@| Option(5))(_ + _)
+  //val example1 = (Option(3) |@| Option(5))((_, _))  // ((a, b) => (a, b) takes two things and returns a tuple of two things
   val example2 = zip(Option(3), Option("foo")) : Option[(Int, String)]
   def zip[F[_]: Applicative, A, B](l: F[A], r: F[B]): F[(A, B)] =
     (l |@| r)((_, _))
@@ -431,6 +509,17 @@ object functor {
   // Map is not an applicative:
   def pointMap[K, V](v: V): Map[K, V] = Map() // only way to write that
   // also true for tuples
+
+  // implicit def ApplicativeList: Applicative[List] =
+  //   new Applicative[List] {
+  //     def point[A](a: => A): List[A] = List(a)
+  //
+  //     def ap[A, B](fa: => List[A])(f: => List[A => B]): List[B] =
+  //       for {
+  //         a <- fa
+  //         f <- f
+  //       } yield f(a)
+  //   }
 
   // trait Monad[F[_]] extends Applicative[F] {
   //   def bind[A, B](fa: F[A])(f: A => F[B]): F[B] // doesn't necessarily produce any Bs, could be None, Nil, Future.fail...
@@ -521,13 +610,13 @@ object parser {
   // Implement all missing methods for parser.
   //
   case class Parser[+E, +A](run: String => Either[E, (String, A)]) { self =>
-    def ~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, (A, B)] =
+    def ~ [E1 >: E, B](that: => Parser[E1, B]): Parser[E1, (A, B)] =
       self.flatMap(a => that.map(b => (a, b)))
 
-    def ~> [E1 >: E, B](that: Parser[E1, B]): Parser[E1, B] =
+    def ~> [E1 >: E, B](that: => Parser[E1, B]): Parser[E1, B] =
       (self ~ that).map(_._2)
 
-    def <~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, A] =
+    def <~ [E1 >: E, B](that: => Parser[E1, B]): Parser[E1, A] =
       (self ~ that).map(_._1)
 
     def map[B](f: A => B): Parser[E, B] =
@@ -540,7 +629,7 @@ object parser {
           case Right((input, a)) => f(a).run(input)
         })
 
-    def orElse[E1 >: E, B](that: Parser[E1, B]): Parser[E1, Either[A, B]] = {
+    def orElse[E1 >: E, B](that: => Parser[E1, B]): Parser[E1, Either[A, B]] = {
       val self1 = self.map(Left(_))
       val that1 = that.map(Right(_))
 
@@ -556,7 +645,7 @@ object parser {
           case Right((input, a)) => if (f(a)) Right((input, a)) else Left(e0)
         })
 
-    def | [E1 >: E, A1 >: A](that: Parser[E1, A1]): Parser[E1, A1] =
+    def | [E1 >: E, A1 >: A](that: => Parser[E1, A1]): Parser[E1, A1] =
       (self orElse (that)).map(_.merge)
 
     def rep: Parser[E, List[A]] =
@@ -633,10 +722,10 @@ object foldable {
   //
   // EXERCISE 0
   //
-  // Define an instance of 'Foldable' for 'List'
+  // Define an instance of `Foldable` for `List`
   //
   implicit val FoldableList: Foldable[List] = new Foldable[List] {
-    def foldMap[A, B](fa: List[A])(f: A => B)(implicit F: Monoid[B]): B =
+    def foldMap[A, B: Monoid](fa: List[A])(f: A => B): B =
       fa match {
         case Nil => mzero[B]
         case a :: as => f(a) |+| foldMap(as)(f)
@@ -718,11 +807,14 @@ object foldable {
   // Try to define an instance of `Traverse` for `Parser[E, ?]`.
   //
   case class Parser[+E, +A](run: String => Either[E, (String, A)])
-  implicit def TraverseParser[E]: Traverse[Parser[E, ?]] = ??? // can't do it :o), parsers are not traversable
+  implicit def TraverseParser[E]: Traverse[Parser[E, ?]] =
+    new Traverse[Parser[E, ?]] {
+       def traverseImpl[G[_]: Applicative, A, B](fa: Parser[E, A])(f: A => G[B]): G[Parser[E,B]] =
+         ??? // can't do it :o), parsers are not traversable (only data structures are, functions are not, and parsers are functions)
+    }
 }
 
 object optics {
-  // ADT toy example
   sealed trait Country
   object Country {
     val usa: Prism[Country, Unit] = // could use USA.type, but not necessary (it's a case object), Unit has no information at all and easier to call
@@ -731,8 +823,8 @@ object optics {
         case _ => None
       }, _ => USA)
   }
-  case object USA extends Country
-  case object UK extends Country
+  case object USA    extends Country
+  case object UK     extends Country
   case object Poland extends Country
 
   case class Org(name: String, address: Address, site: Site) // site was list
@@ -740,24 +832,26 @@ object optics {
     val site: Lens[Org, Site] =
       Lens[Org, Site](_.site, l => _.copy(site = l))
   }
+
   case class Address(
-                      number: String,
-                      street: String,
-                      postalCode: String,
-                      country: Country)
+    number: String,
+    street: String,
+    postalCode: String,
+    country: Country)
+
   case class Site(
-                   manager: Employee,
-                   address: Address,
-                   employees: Set[Employee])
+    manager: Employee,
+    address: Address,
+    employees: Set[Employee])
   object Site {
     val manager: Lens[Site, Employee] =
       Lens[Site, Employee](_.manager, m => _.copy(manager = m))
   }
   case class Employee(
-                       name: String,
-                       dob: java.time.Instant,
-                       salary: BigDecimal,
-                       address: Address)
+    name: String,
+    dob: java.time.Instant,
+    salary: BigDecimal,
+    address: Address)
   object Employee {
     val salary: Lens[Employee, BigDecimal] =
       Lens[Employee, BigDecimal](_.salary, s => _.copy(salary = s))
@@ -784,13 +878,24 @@ object optics {
   // Implement the `>>>` method of `Lens`.
   //
   final case class Lens[S, A](
-                               get: S => A,
-                               set: A => (S => S)
-                             ) { self =>
-    def >>>[B](that: Lens[A, B]): Lens[S, B] = // Compose lenses
+    get: S => A,
+    set: A => (S => S)
+  ) { self =>
+    def >>> [B](that: Lens[A, B]): Lens[S, B] = // Compose lenses
       Lens[S, B](
         get = (s: S) => self.get.andThen(that.get)(s), // that.get(self.get(s))
         set = (b: B) => (s: S) => self.set(that.set(b)(self.get(s)))(s)
+        //get = (s: S) => {
+        //  val a: A = self.get(s)
+        //  val b: B = that.get(a)
+        //  b
+        //},
+        //set = (b: B) => (s: S) => {
+        //  val a: A = self.get(s)
+        //  val `A => A` = that.set(b)
+        //  val `S => S` = self.set(`A => A`(a))
+        //  `S => S`(s)
+        //}
       )
 
     final def update(f: A => A): S => S =
@@ -814,8 +919,8 @@ object optics {
   // Implement `>>>` for `Prism`.
   //
   final case class Prism[S, A](
-                                get: S => Option[A],
-                                set: A => S) { self =>
+    get: S => Option[A],
+    set: A => S) { self =>
     def >>> [B](that: Prism[A, B]): Prism[S, B] =
       Prism(
         get = (s: S) => self.get(s).flatMap(that.get),
