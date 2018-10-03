@@ -718,8 +718,7 @@ object zio_concurrency {
   //
   // Compute all values `workers` in parallel using `IO.parAll`.
   //
-  val workers: List[IO[Nothing, Int]] =
-    (1 to 10).toList.map(fibonacci(_)) // generate a list of programs
+  val workers: List[IO[Nothing, Int]] = (1 to 10).toList.map(fibonacci(_)) // generate a list of programs
   val workersInParallel: IO[Nothing, List[Int]] =
     IO.parAll(workers) // terminates the other 9 right away if one fails
 
@@ -933,6 +932,8 @@ object zio_schedule {
     def ? = ???
   }
 
+  // Schedule[A, B]
+
   //
   // EXERCISE 1
   //
@@ -1029,7 +1030,7 @@ object zio_interop {
   // Use `IO.fromFuture` method to convert the following `Future` into an `IO`.
   //
   val future1 = () => Future.successful("Hello World")
-  val io1 = IO.fromFuture(???)(global)
+  val io1: IO[Throwable, String] = IO.fromFuture(future1)(global)
 
   //
   // EXERCISE 2
@@ -1037,7 +1038,7 @@ object zio_interop {
   // Use the `toFuture` method on `IO` to convert the following `io` to `Future`.
   //
   val io2: IO[Throwable, Int] = IO.point(42)
-  val future2: IO[Nothing, Future[Int]] = io2 ?
+  val future2: IO[Nothing, Future[Int]] = io2.toFuture
 
   //
   // EXERCISE 3
@@ -1046,11 +1047,13 @@ object zio_interop {
   // an `IO`.
   //
   val future3 = () => Future.failed[Int](new Error("Uh ohs!"))
-  val fiber1: Fiber[Throwable, Int] = Fiber.fromFuture(???)(global)
+  val fiber1: Fiber[Throwable, Int] = Fiber.fromFuture(future3())(global)
 
   import scalaz.zio.interop.Task
   import scalaz.zio.interop.catz._
   import cats.effect.concurrent.Ref
+
+  // type Task[A] = IO[Throwable, A] // in cats effects error type is fixed to Throwable
 
   //
   // EXERCISE 4
@@ -1218,11 +1221,11 @@ object zio_promise {
   // that was failed in another fiber.
   //
   val handoff2: IO[Error, Int] =
-  for {
-    promise <- Promise.make[Error, Int]
-    _       <- promise.error(new Error).delay(10.milliseconds).fork
-    value   <- (promise.get : IO[Error, Int])
-  } yield value
+    for {
+      promise <- Promise.make[Error, Int]
+      _       <- promise.error(new Error).delay(10.milliseconds).fork
+      value   <- (promise.get : IO[Error, Int])
+    } yield value
 
   //
   // EXERCISE 8
@@ -1231,19 +1234,157 @@ object zio_promise {
   // that was interrupted in another fiber.
   //
   val handoff3: IO[Error, Int] =
-  for {
-    promise <- Promise.make[Error, Int]
-    _       <- promise.interrupt.delay(10.milliseconds).fork
-    value   <- (promise.get : IO[Error, Int])
-  } yield value
+   for {
+     promise <- Promise.make[Error, Int]
+     _       <- promise.interrupt.delay(10.milliseconds).fork
+     value   <- (promise.get : IO[Error, Int])
+   } yield value
 }
 
 object zio_queue {
+  implicit class FixMe[A](a: A) {
+    def ? = ???
+  }
+
+  //
+  // EXERCISE 1
+  //
+  // Using the `Queue.bounded`, create a queue for `Int` values with a capacity
+  // of 10
+  //
+  val makeQueue: IO[Nothing, Queue[Int]] = Queue.bounded(10)
+
+  //
+  // EXERCISE 2
+  //
+  // Using the `offer` method of `Queue`, place an integer value into a queue.
+  //
+  val offered1: IO[Nothing, Unit] =
+    for {
+      queue <- makeQueue
+      _     <- (queue.offer(42) : IO[Nothing, Unit])
+    } yield ()
+
+  //
+  // EXERCISE 3
+  //
+  // Using the `take` method of `Queue`, take an integer value frin a queue.
+  //
+  val taken1: IO[Nothing, Int] =
+    for {
+      queue <- makeQueue
+      _     <- (queue.offer(42) : IO[Nothing, Unit])
+      value <- (queue.take : IO[Nothing, Int])
+    } yield value
+
+  //
+  // EXERCISE 4
+  //
+  // In a child fiber, place 2 values into a queue, and in the main fiber, read
+  // 2 values from the queue.
+  //
+  val offeredTaken1: IO[Nothing, (Int, Int)] =
+    for {
+      queue <- makeQueue
+      _     <- (queue.offer(42) *> queue.offer(42) : IO[Nothing, Unit]).fork
+      v1    <- (queue.take : IO[Nothing, Int])
+      v2    <- (queue.take : IO[Nothing, Int])
+    } yield (v1, v2)
+
+  //
+  // EXERCISE 5
+  //
+  // In a child fiber, read infinitely many values out of the queue and write
+  // them to the console. In the main fiber, write 100 values into the queue.
+  //
+  val infiniteReader1: IO[Nothing, List[Int]] =
+    for {
+      queue <- makeQueue
+      _     <- (queue.take.flatMap(i => putStrLn(i.toString).attempt.void).forever : IO[Nothing, Nothing]).fork
+      vs    <- {
+        // (1 to 100).map(queue.offer(_))
+        (queue ? : IO[Nothing, List[Int]])
+      }
+    } yield vs
+  // concurrent access
+
+  //
+  // EXERCISE 6
+  //
+  // Using `Queue`, `Ref`, and `Promise`, implement an "actor" like construct
+  // that can atomically update the values of a counter
+  //
+  val makeCounter: IO[Nothing, Int => IO[Nothing, Int]] =
+    for {
+      counter <- Ref(0)
+      queue   <- Queue.bounded[(Int, Promise[Nothing, Int])](100)
+                // consume from the queue and update the counter and complete the promise to indicate
+                // we have finished with the element we have pulled from the queue
+      _       <- queue.take.flatMap {
+                     case (amount, promise) =>
+                       counter.update(_ + amount).flatMap(promise.complete)
+                   }
+                   .forever
+                   .fork: IO[Nothing, Fiber[Nothing, Nothing]]
+    } yield { (amount: Int) =>
+      for {
+        promise <- Promise.make[Nothing, Int]
+        _       <- queue.offer((amount, promise))
+        value   <- promise.get
+      } yield value
+    }
+
+  val counterExample: IO[Nothing, Int] =
+    for {
+      counter <- makeCounter
+      _       <- IO.parAll(List.fill(100)(IO.traverse(0 to 100)(counter)))
+      value   <- counter(0)
+    } yield value
 
 }
 
 object zio_rts {
+  implicit class FixMe[A](a: A) {
+    def ? = ???
+  }
 
+  //
+  // EXERCISE 1
+  //
+  // Create a new runtime system (that extends scalaz.zio.RTS).
+  //
+  val MyRTS: RTS = new RTS {
+
+  }
+
+  //
+  // EXERCISE 2
+  //
+  // Run the following `IO` by using `MyRTS`.
+  //
+  (MyRTS.unsafeRun(putStrLn("Hello World")) : Unit)
+
+  //
+  // EXERCISE 3
+  //
+  // Run the following `IO` by using `unsafeRunSync` method of `MyRTS`.
+  //
+  (MyRTS.unsafeRunSync(putStrLn("Hello World")) : ExitResult[java.io.IOException, Unit])
+
+  //
+  // EXERCISE 4
+  //
+  // In this purely function main program (made possible by `App`), ask the
+  // user for their name and print it out again.
+  //
+  object MyApp extends App {
+    def run(args: List[String]): IO[Nothing, ExitStatus] =
+      (for {
+        _ <- putStrLn("Hello World!").delay(1.hour).ensuring(putStrLn("Goodbye!").attempt.void)
+      } yield ()).redeemPure(_ => ExitStatus.ExitNow(1), _ => ExitStatus.ExitNow(0))
+  }
+  // You can run it with your favourite runners (sbt, IntelliJ, ...)
+  // Also ZIO will interrupt your fiber and all finalizers will be run; i.e. clean termination
 }
 
 object zio_advanced {
