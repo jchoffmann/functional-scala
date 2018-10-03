@@ -6,6 +6,64 @@ import scalaz.zio._
 import scalaz.zio.console._
 import scala.concurrent.duration._
 
+object notepad {
+  //def println(line: String): Unit = () // These are the FP implementations
+  //def readLine: String = ""
+
+  // Instead of interacting with the real world, build an immutable data structure that describes interactions with the real world
+  sealed trait Program[A] { self =>
+    import Program.{Return, WriteLine, ReadLine}
+    // No ScalaZ imported here, so make it Monadic by writing map, zip (to combine)
+    //final def map[B](f: A => B): Program[B] = self match {
+    //  case Return(thunk)         => Return(() => f(thunk))
+    //  case WriteLine(line, next) => WriteLine(line, next.map(f))
+    //  case ReadLine(next)        => ReadLine(input => next(input).map(f))
+    //}
+    final def map[B](f: A => B): Program[B] = flatMap(a => Program.point(f(a))) // flatMap(f andThen (Program.point(_)))
+
+    final def zip[B](that: Program[B]): Program[(A, B)] =
+      for {
+        a <- self
+        b <- that
+      } yield (a, b)
+
+    final def flatMap[B](f: A => Program[B]): Program[B] = self match {
+      case Return(thunk)         => f(thunk())
+      case WriteLine(line, next) => WriteLine(line, next.flatMap(f))
+      case ReadLine(next) => ReadLine(input => next(input).flatMap(f))
+    }
+
+  }
+  object Program {
+    final case class Return[A](value: () => A) extends Program[A]
+    final case class WriteLine[A](line: String, next: Program[A]) extends Program[A]
+    final case class ReadLine[A](next: String => Program[A]) extends Program[A]
+
+    // Helper functions
+    def point[A](a: => A): Program[A] = Return(() => a)
+    def writeLine(line: String): Program[Unit] = WriteLine(line, point(()))
+    val readLine: Program[String] = ReadLine(point(_)) // was def, can change to a val (in purely functional programs, refential transparency)
+  }
+
+  import Program.{point, writeLine, readLine}
+  // Can only write simple programs
+  val hellowWorld = writeLine("Hello World!")
+  val getInput = readLine
+
+  // Implemented map and zip (via FlatMap)
+  val getInt: Program[Option[Int]] = readLine.map(text => scala.util.Try(text.toInt).toOption)
+
+  val program: Program[String] =
+    for {
+      _    <- writeLine("Hello World!")
+      _    <- writeLine("What is your name?")
+      name <- readLine
+      _    <- writeLine("Hello, " + name + ", it is good to meet you!")
+    } yield name
+  //program // doesn't do anything, it is just a data structure describing interactions with the real world
+  // Can now treat programs as first class citizens, can store in data structures etc
+}
+
 object zio_background {
   sealed trait Program[A] { self =>
     final def *> [B](that: Program[B]): Program[B] =
@@ -59,11 +117,12 @@ object zio_background {
   //
   // Rewrite `program1` to use a for comprehension.
   //
-  val yourName2: Program[Unit] = for {
-    _    <- writeLine("What is your name?")
-    name <- readLine
-    _    <- writeLine("Hello, " + name + ", good to meet you!")
-  } yield ()
+  val yourName2: Program[Unit] =
+    for {
+      _    <- writeLine("What is your name?")
+      name <- readLine
+      _    <- writeLine("Hello, " + name + ", good to meet you!")
+    } yield ()
   // Scala translates for-comprehensions into a flatMaps and a final maps (and filters)
   // (problem with final map is when you have a recursive call, will leak heap)
   // In for-comprehensions: To the right of ever arrow make sure you have a monadic value (F), in yield normal value
@@ -74,11 +133,11 @@ object zio_background {
   // Rewrite `yourName2` using the helper function `getName`, which shows how
   // to create larger programs from smaller programs.
   //
-  def yourName3: Program[Unit] = for {
-    name <- getName
-    _    <- writeLine("Hello, " + name + ", good to meet you!")
-  } yield ()
-
+  def yourName3: Program[Unit] =
+    for {
+      name <- getName
+      _    <- writeLine("Hello, " + name + ", good to meet you!")
+    } yield ()
 
   val getName: Program[String] =
     writeLine("What is your name?").flatMap(_ => readLine)
@@ -89,14 +148,12 @@ object zio_background {
   // Implement the following effectful procedure, which interprets
   // `Program[A]` into `A`. You can use this procedure to "run" programs.
   //
-  def interpret[A](program: Program[A]): A = program match {
-    case Program.WriteLine(line, next) =>
-      println(line); interpret(next)
-    case Program.ReadLine(next) =>
-      interpret(next(scala.io.StdIn.readLine()))
-    case Program.Return(value) =>
-      value()
-  }
+  def interpret[A](program: Program[A]): A =
+    program match {
+      case Program.Return(thunk)         => thunk()
+      case Program.WriteLine(line, next) => println(line); interpret(next)
+      case Program.ReadLine(next)        => interpret(next(scala.io.StdIn.readLine()))
+    }
 
   //
   // EXERCISE 4
@@ -104,12 +161,13 @@ object zio_background {
   // Implement the following function, which shows how to write a combinator
   // that operates on programs.
   //
-  def sequence[A](programs: List[Program[A]]): Program[List[A]] = programs match {
-    case Nil => point(Nil)
-    case p :: ps => for {
-      a <- p
-      as <- sequence(ps)
-    } yield a :: as
+  def sequence[A](programs: List[Program[A]]): Program[List[A]] =
+    programs match {
+      case Nil => point(Nil)
+      case p :: ps => for {
+        a <- p
+        as <- sequence(ps)
+      } yield a :: as
   }
 
   //
@@ -136,30 +194,33 @@ object zio_background {
     }
 
   }
-  def ageExplainer2: Program[Int] = for { // was: Program[Unit], but Program[Int] more interesting
-    _    <- writeLine("What is your age?")
-    line <- readLine
-    age  <- scala.util.Try(line.toInt).toOption match {
-             case Some(age) =>
-               (if      (age < 12)  writeLine("You are a kid")
-                else if (age < 20)  writeLine("You are a teenager")
-                else if (age < 30)  writeLine("You are a grownup")
-                else if (age < 50)  writeLine("You are an adult")
-                else if (age < 80)  writeLine("You are a mature adult")
-                else if (age < 100) writeLine("You are elderly")
-                else                writeLine("You are probably lying.")) *> point(age)
-              case None =>
-                writeLine("That's not an age, try again")                 *> ageExplainer2
-              // GOTCHA:
-              // Since this is functional code, writeLine(..) followed by recursive calling ageExplainer2 would throw
-              // the writeLine result away and the code would be equivalent to just ageExplainer2. We need to use the
-              // fish operator to make sure both actions happen, and throw away one result
-    }
-  } yield age
+  def ageExplainer2: Program[Int] = // was: Program[Unit], but Program[Int] more interesting
+    for {
+      _    <- writeLine("What is your age?")
+      line <- readLine
+      age  <- scala.util.Try(line.toInt).toOption match {
+               case Some(age) =>
+                 (if      (age < 12)  writeLine("You are a kid")
+                  else if (age < 20)  writeLine("You are a teenager")
+                  else if (age < 30)  writeLine("You are a grownup")
+                  else if (age < 50)  writeLine("You are an adult")
+                  else if (age < 80)  writeLine("You are a mature adult")
+                  else if (age < 100) writeLine("You are elderly")
+                  else                writeLine("You are probably lying.")) *> point(age)
+                case None =>
+                  writeLine("That's not an age, try again")                 *> ageExplainer2
+                // GOTCHA:
+                // Since this is functional code, writeLine(..) followed by recursive calling ageExplainer2 would throw
+                // the writeLine result away and the code would be equivalent to just ageExplainer2. We need to use the
+                // fish operator to make sure both actions happen, and throw away one result
+              }// type Program[Unit]
+    } yield age
 }
 
 object zio_type {
   type ??? = Nothing
+
+  // type IO[E, A] // synchronous, asynchronous, concurrent, parallel, effectful
 
   //
   // EXERCISE 1
@@ -167,7 +228,7 @@ object zio_type {
   // Write the type of `IO` values that can fail with an `Exception`, or
   // may produce an `A`.
   //
-  type Exceptional[A] = IO[???, ???]
+  type Exceptional[A] = IO[Exception, A]
 
   //
   // EXERCISE 2
@@ -175,14 +236,16 @@ object zio_type {
   // Write the type of `IO` values that can fail with a `Throwable`, or
   // may produce an `A`.
   //
-  type Task[A] = IO[???, ???]
+  type Task[A] = IO[Throwable, A]
+  // Throwable is the root of the hierarchy, contains errors and exceptions, but errors are not recoverable
+  // So you might prefer Exceptional
 
   //
   // EXERCISE 3
   //
   // Write the type of `IO` values that cannot fail, but may produce an `A.`
   //
-  type Infallible[A] = IO[???, ???]
+  type Infallible[A] = IO[Nothing, A] // Nothing => compiler guarantees that there can be no values of that type
 
   //
   // EXERCISE 4
@@ -190,14 +253,14 @@ object zio_type {
   // Write the type of `IO` values that cannot produce a value, but may fail
   // with an `E`.
   //
-  type Unproductive[E] = IO[???, ???]
+  type Unproductive[E] = IO[E, Nothing]
 
   //
   // EXERCISE 5
   //
   // Write the type of `IO` values that cannot fail or produce a value.
   //
-  type Unending = IO[???, ???]
+  type Unending = IO[Nothing, Nothing] // Like a server that you never want to go down
 }
 
 object zio_values {
@@ -207,7 +270,7 @@ object zio_values {
   // Using the `IO.now` method, lift the integer `2` into a strictly-evaluated
   // `IO`.
   //
-  val ioInteger: IO[Nothing, Int] = ???
+  val ioInteger: IO[Nothing, Int] = IO.now(2)
 
   //
   // EXERCISE 2
@@ -215,7 +278,7 @@ object zio_values {
   // Using the `IO.point` method, lift the string "Functional Scala" into a
   // lazily-evaluated `IO`.
   //
-  val ioString: IO[Nothing, String] = ???
+  val ioString: IO[Nothing, String] = IO.point("Functional Scala")
 
   //
   // EXERCISE 3
@@ -223,7 +286,7 @@ object zio_values {
   // Using the `IO.fail` method to lift the string "Bad Input" into a failed
   // `IO`.
   //
-  val failedInput: IO[String, Nothing] = ???
+  val failedInput: IO[String, Nothing] = IO.fail("Bad Input")
 }
 
 object zio_composition {
@@ -238,7 +301,7 @@ object zio_composition {
   // integer into its string rendering using the `map` method of the `IO`
   // object.
   //
-  (IO.point(42) ? : IO[Nothing, String])
+  (IO.point(42).map(_.toString) : IO[Nothing, String])
 
   //
   // EXERCISE 2
@@ -247,7 +310,7 @@ object zio_composition {
   // integer error into its string rendering using the `leftMap` method of the
   // `IO` object.
   //
-  (IO.fail(42) ? : IO[String, Nothing])
+  (IO.fail(42).leftMap(_.toString) : IO[String, Nothing])
 
   //
   // EXERCISE 3
@@ -257,7 +320,7 @@ object zio_composition {
   //
   val ioX: IO[Nothing, Int] = IO.point(42)
   val ioY: IO[Nothing, Int] = IO.point(58)
-  val ioXPlusY: IO[Nothing, Int] = ioX.flatMap(???)
+  val ioXPlusY: IO[Nothing, Int] = ioX.flatMap(x => ioY.map(x + _))
 
   //
   // EXERCISE 4
@@ -265,7 +328,11 @@ object zio_composition {
   // Using the `flatMap` method of `IO`, implement `ifThenElse`.
   //
   def ifThenElse[E, A](bool: IO[E, Boolean])(
-    ifTrue: IO[E, A], ifFalse: IO[E, A]): IO[E, A] = ???
+    ifTrue: IO[E, A], ifFalse: IO[E, A]): IO[E, A] =
+    for {
+      b <- bool
+      a <- if (b) ifTrue else ifFalse // conditional needs to be right of the arrow
+    } yield a
   val exampleIf = ifThenElse(IO.point(true))(IO.point("It's true!"), IO.point("It's false!"))
 
   //
@@ -296,8 +363,18 @@ object zio_composition {
     }
   }
   def decode2[E](read: IO[E, Byte]): IO[E, Either[Byte, Int]] =
-    ???
-
+    for {
+      b1 <- read
+      e <- if (b1 < 0) IO.now(Left(b1))
+           else for {
+             b2 <- read
+             b3 <- read
+             b4 <- read
+           } yield Right(b1.toInt +
+              (b2.toInt << 8) +
+              (b3.toInt << 16) +
+              (b4.toInt << 24))
+    } yield e
   //
   // EXERCISE 7
   //
@@ -321,7 +398,7 @@ object zio_composition {
   def forever1(action: () => Unit): Unit =
     while (true) action()
   def forever2[A](action: IO[Nothing, A]): IO[Nothing, Nothing] =
-    ???
+    action.flatMap(_ => forever2(action))
 
   //
   // EXERCISE 9
@@ -335,7 +412,8 @@ object zio_composition {
       repeatN1(n - 1, action)
     }
   def repeatN2[E](n: Int, action: IO[E, Unit]): IO[E, Unit] =
-    ???
+    if (n <= 0) IO.now(())
+    else action.flatMap(_ => repeatN2(n - 1, action))
 
   //
   // EXERCISE 10
@@ -343,6 +421,7 @@ object zio_composition {
   // Translate the following expression into its `flatMap` equivalent.
   //
   IO.point(42) *> IO.point(19)
+  IO.point(42).flatMap(_ => IO.point(19))
 
   //
   // EXERCISE 11
@@ -350,6 +429,7 @@ object zio_composition {
   // Translate the following expression into its `flatMap` equivalent.
   //
   IO.point(42) <* IO.point(19)
+  IO.point(42).flatMap(left => IO.point(19).map(_ => left))
 
   //
   // EXERCISE 12
@@ -400,7 +480,8 @@ object zio_failure {
     if (i < 0 || i >= a.length) throw new IndexOutOfBoundsException("The index " + i + " is out of bounds [0, " + a.length + ")")
     else a(i)
   def accessArr2[A](i: Int, a: Array[A]): IO[IndexOutOfBoundsException, A] =
-    ???
+    if (i < 0 || i >= a.length) IO.fail(new IndexOutOfBoundsException("The index " + i + " is out of bounds [0, " + a.length + ")"))
+    else IO.point(a(i))
 
   //
   // EXERCISE 5
@@ -421,9 +502,10 @@ object zio_failure {
   //
   val recovered1: IO[Nothing, Int] =
     divide1(100, 0).attempt.map {
-      case Left(error) => ???
-      case Right(value) => ???
+      case Left(error) => -1
+      case Right(value) => value
     }
+  // attempt: IO[E, A] => IO[Nothing, Either[E, A]] moving error along, resulting IO cannot fail
 
   //
   // EXERCISE 7
@@ -431,7 +513,8 @@ object zio_failure {
   // Recover from a division by zero error by using `redeem`.
   //
   val recovered2: IO[Nothing, Int] =
-    divide1(100, 0).redeem(???, ???)
+    divide1(100, 0).redeem(_ => IO.now(-1), IO.now)
+  // removes boilerplate seen in attempt
 
   //
   // EXERCISE 8
@@ -441,16 +524,18 @@ object zio_failure {
   //
   val firstChoice: IO[DenomIsZero, Int] = divide1(100, 0)
   val secondChoice: IO[Nothing, Int] = IO.now(400)
-  val combined: IO[Nothing, Int] = ???
+  val combined: IO[Nothing, Int] = firstChoice orElse secondChoice
 }
 
 object zio_effects {
+
   import scala.io.StdIn.readLine
   import scala.io.Source
   import java.io.File
   import java.util.concurrent.{Executors, TimeUnit}
 
   type ??? = Nothing
+
   implicit class FixMe[A](a: A) {
     def ?[B] = ???
   }
@@ -461,7 +546,7 @@ object zio_effects {
   // Using the `IO.sync` method, wrap Scala's `println` method to import it into
   // the world of pure functional programming.
   //
-  def putStrLn(line: String): IO[Nothing, Unit] = println ?
+  def putStrLn(line: String): IO[Nothing, Unit] = IO.sync(println(line))
 
   //
   // EXERCISE 2
@@ -469,7 +554,8 @@ object zio_effects {
   // Using the `IO.sync` method, wrap Scala's `readLine` method to import it
   // into the world of pure functional programming.
   //
-  val getStrLn: IO[Nothing, String] = readLine ?
+  val getStrLn: IO[Nothing, String] = IO.sync(readLine)
+  // but readLine can fail, so this is not reflected in the types; Thread is terminated and reported to supervisor
 
   //
   // EXERCISE 3
@@ -477,8 +563,32 @@ object zio_effects {
   // Using the `IO.syncException` method, wrap Scala's `getLines` method to
   // import it into the world of pure functional programming.
   //
-  def readFile(file: File): IO[Exception, List[String]] =
-    Source.fromFile(file).getLines.toList ?
+  def readFile1(file: File): IO[Exception, List[String]] =
+    IO.syncException(Source.fromFile(file).getLines.toList)
+
+  //
+  // EXERCISE 3.5
+  //
+  // Using the `IO.syncThrowable` method, wrap Scala's `getLines` method to
+  // import it into the world of pure functional programming.
+  //
+  def readFile2(file: File): IO[Throwable, List[String]] =
+    IO.syncThrowable(Source.fromFile(file).getLines.toList)
+
+  //
+  // EXERCISE 3.75
+  //
+  // Using the `IO.syncCatch` method, wrap Scala's `getLines` method to
+  // import it into the world of pure functional programming.
+  //
+  import java.io.IOException
+
+  def readFile3(file: File): IO[IOException, List[String]] =
+    IO.syncCatch(Source.fromFile(file).getLines.toList) {
+      case e: IOException => e // possible different error type
+    }
+
+  // only if you want to catch a specific type of exception
 
   //
   // EXERCISE 4
@@ -486,7 +596,7 @@ object zio_effects {
   // Identify the correct method and error type to import `System.nanoTime`
   // safely into the world of pure functional programming.
   //
-  def nanoTime: IO[???, Long] = System.nanoTime() ?
+  def nanoTime: IO[Nothing, Long] = IO.sync(System.nanoTime)
 
   //
   // EXERCISE 5
@@ -494,7 +604,11 @@ object zio_effects {
   // Identify the correct method, error, and value type to import `System.exit`
   // safely into the world of pure functional programming.
   //
-  def sysExit(code: Int): IO[???, ???] = System.exit(code) ?
+  def sysExit(code: Int): IO[SecurityException, Nothing] = IO.syncCatch(System.exit(code)) { // Return type should be Nothing, since it fails or never returns
+    case e: SecurityException => e
+  } *> IO.terminate // you need to prove to the compiler that it can never terminate
+  //} *> IO.never
+  // more precise than: IO.syncException(System.exit(code))
 
   //
   // EXERCISE 6
@@ -502,8 +616,18 @@ object zio_effects {
   // Identify the correct method, error, and value type to import
   // `Array.update` safely into the world of pure functional programming.
   //
-  def arrayUpdate[A](a: Array[A], i: Int, f: A => A): IO[???, ???] =
-    a.update(i, f(a(i))) ?
+  def arrayUpdate[A](a: Array[A], i: Int, f: A => A): IO[ArrayIndexOutOfBoundsException, Unit] =
+    IO.syncCatch(a.update(i, f(a(i)))) {
+      case e: ArrayIndexOutOfBoundsException => e
+    }
+
+  // Async:
+  IO.async[Nothing, Int](k => k(ExitResult.Completed(42))): IO[Nothing, Int]
+  //for {
+  //  result <- callApi(x)
+  //  result2 <- callOtherApi(y)
+  //  result3 <- makeDatabaseQuery(result, result2)
+  //} yield result3
 
   //
   // EXERCISE 7
@@ -512,10 +636,15 @@ object zio_effects {
   // choose the correct error type.
   //
   val scheduledExecutor = Executors.newScheduledThreadPool(1)
-  def sleep(l: Long, u: TimeUnit): IO[???, Unit] =
-    scheduledExecutor.schedule(new Runnable {
-      def run(): Unit = ???
-    }, l, u) ?
+
+  def sleep(l: Long, u: TimeUnit): IO[Nothing, Unit] = IO.async[Nothing, Unit] { callback =>
+    scheduledExecutor.schedule(
+      new Runnable {
+        def run(): Unit = callback(ExitResult.Completed(()))
+      }, l, u
+    )
+  }
+  // Using Nothing, still computation can fail if executor has been shut down, but we consider that as a nonrecoverable error
 
   //
   // EXERCISE 8
@@ -535,7 +664,21 @@ object zio_effects {
         println("You guessed wrong! The number was " + number)
     }
   }
-  def playGame2: IO[Exception, Unit] = ???
+
+  def playGame2: IO[Exception, Unit] =
+    for {
+      number <- IO.sync(scala.util.Random.nextInt(5))
+      _      <- putStrLn("Enter a number between 0 - 5: ")
+      line   <- getStrLn
+      _      <- scala.util.Try(line.toInt).toOption match {
+                  case None =>
+                    putStrLn("You didn't enter an integer!")                *> playGame2
+                  case Some(guess) if (guess == number) =>
+                    putStrLn("You guessed right! The number was " + number)
+                  case _ =>
+                    putStrLn("You guessed wrong! The number was " + number)
+                }
+    } yield ()
 }
 
 object zio_concurrency {
