@@ -110,6 +110,21 @@ object algebra {
   // mappend(1, mappend(2, mappend(3, 4)))
   // 1  ⊹  2  ⊹ 3   ⊹  4                     // unicode char
   // 1 |+| 2 |+| 3 |+| 4                     // the one we used
+
+  // Newtypes:
+  // Int has 2 Semigroups, not good (multiple implicits, force users to import etc...terrible)
+  implicit val IntSemigroup1: Semigroup[Int] = (l, r) => l + r
+  implicit val IntSemigroup2: Semigroup[Int] = (l, r) => l * r
+  // Solve:
+  class Add(val value: Int) extends AnyVal // Lightweight wrappers
+  object Add { def apply(value: Int) = new Add(value) }
+  class Mul(val value: Int) extends AnyVal
+  object Mul { def apply(value: Int) = new Mul(value) }
+  implicit val IntSemigroup3: Semigroup[Add] = (l, r) => Add(l.value + r.value)
+  implicit val IntSemigroup4: Semigroup[Mul] = (l, r) => Mul(l.value * r.value)
+  Add(1) |+| Add(2)
+  Mul(1) |+| Mul(2)
+  // Haskell(?): newtype, only exists at compile time, not at runtime
 }
 
 object functor {
@@ -842,7 +857,7 @@ object optics {
   case class Site(
     manager: Employee,
     address: Address,
-    employees: Set[Employee])
+    employees: Set[Employee]) // Can use traversal here
   object Site {
     val manager: Lens[Site, Employee] =
       Lens[Site, Employee](_.manager, m => _.copy(manager = m))
