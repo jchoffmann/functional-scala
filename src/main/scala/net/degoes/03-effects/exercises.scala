@@ -131,7 +131,7 @@ object zio_background {
   // Rewrite `yourName2` using the helper function `getName`, which shows how
   // to create larger programs from smaller programs.
   //
-  val yourName3: Program[Unit] =
+  def yourName3: Program[Unit] =
     for {
       name <- getName
       _    <- writeLine("Hello, " + name + ", good to meet you!")
@@ -579,8 +579,6 @@ object zio_effects {
   //
   import java.io.IOException
   def readFile3(file: File): IO[IOException, List[String]] =
-
-  def readFile3(file: File): IO[IOException, List[String]] =
     IO.syncCatch(Source.fromFile(file).getLines.toList) {
       case e: IOException => e // possible different error type
     }
@@ -693,7 +691,7 @@ object zio_concurrency {
   //
   val leftContestent1 = IO.never
   val rightContestent1 = putStrLn("Hello World")
-  val raced1 = ???
+  val raced1 = leftContestent1 race rightContestent1
 
   //
   // EXERCISE 2
@@ -703,7 +701,7 @@ object zio_concurrency {
   //
   val leftContestent2: IO[Exception, Nothing] = IO.fail(new Exception("Uh oh!"))
   val rightContestent2: IO[Exception, Unit] = IO.sleep(10.milliseconds) *> putStrLn("Hello World")
-  val raced2: ??? = ???
+  val raced2: IO[Exception, Unit] = leftContestent2 race rightContestent2
 
   //
   // EXERCISE 3
@@ -713,7 +711,7 @@ object zio_concurrency {
   //
   val leftWork1: IO[Nothing, Int] = fibonacci(10)
   val rightWork1: IO[Nothing, Int] = fibonacci(10)
-  val par1: ??? = ???
+  val par1: IO[Nothing, (Int, Int)] = leftWork1 par rightWork1
 
   //
   // EXERCISE 4
@@ -721,9 +719,9 @@ object zio_concurrency {
   // Compute all values `workers` in parallel using `IO.parAll`.
   //
   val workers: List[IO[Nothing, Int]] =
-    (1 to 10).toList.map(fibonacci(_))
+    (1 to 10).toList.map(fibonacci(_)) // generate a list of programs
   val workersInParallel: IO[Nothing, List[Int]] =
-    ???
+    IO.parAll(workers) // terminates the other 9 right away if one fails
 
   //
   // EXERCISE 5
@@ -732,7 +730,11 @@ object zio_concurrency {
   // and yielding a tuple of their results.
   //
   def myPar[E, A, B](left: IO[E, A], right: IO[E, B]): IO[E, (A, B)] =
-    ???
+    for {
+      left  <- left.fork
+      right <- right.fork
+      v     <- (left zip right).join
+    } yield v // drawback: we don't interrupt here
 
   //
   // EXERCISE 6
@@ -741,7 +743,7 @@ object zio_concurrency {
   // all fibers forked within it will be terminated cleanly.
   //
   val supervisedExample: IO[Nothing, Unit] =
-    (for {
+    IO.supervise(for { // fibers will kept track for you using the runtime system
       fiber <- fibonacci(10000).fork
     } yield ())
 
@@ -759,7 +761,7 @@ object zio_concurrency {
   //
   // EXERCISE 8
   //
-  // Use the `zipWith` method of the `Fiber` object to combine `fiber1` and
+  // Use the `seqWith` method of the `Fiber` object to combine `fiber1` and
   // `fiber2` into a single fiber (by summing the results), so they can be
   // interrupted together.
   //
@@ -767,14 +769,27 @@ object zio_concurrency {
     for {
       fiber1 <- fibonacci(10).fork
       fiber2 <- fibonacci(20).fork
-      both   <- (??? : IO[Nothing, Fiber[Nothing, Int]])
+      both   = fiber1.zipWith(fiber2)(_ + _) // everything on the RHS of the arrow needs to be in the IO monad
       _      <- both.interrupt
     } yield ()
 
   //
   // EXERCISE 9
   //
-  // io.timeout[Option[A]](None)(Some(_))(60.seconds)
+  // User the `timeout` method of `IO` to time out the following long-lived
+  // computation after 60 seconds
+  //
+  val timedout: IO[Nothing, Option[Int]] =
+    fibonacci(100).timeout[Option[Int]](None)(Some(_))(60.seconds)
+
+  //
+  // EXERCISE 10
+  //
+  // Use `IO.parTraverse` to compute the fibonacci numbers of the list of
+  // integers in parallel.
+  //
+  val fibsToCompute = List(1, 2, 3, 4, 5, 6, 7)
+  val inPar: IO[Nothing, List[Int]] = IO.parTraverse(fibsToCompute)(fibonacci) // effectful for loop
 
   def fibonacci(n: Int): IO[Nothing, Int] =
     if (n <= 1) IO.now(n)
@@ -782,17 +797,48 @@ object zio_concurrency {
 }
 
 object zio_resources {
+
   import java.io.{File, FileInputStream}
-  class InputStream private (is: FileInputStream) {
+
+  class InputStream private(is: FileInputStream) {
     def read: IO[Exception, Option[Byte]] =
       IO.syncException(is.read).map(i => if (i < 0) None else Some(i.toByte))
+
     def close: IO[Exception, Unit] =
       IO.syncException(is.close())
   }
+
   object InputStream {
     def openFile(file: File): IO[Exception, InputStream] =
       IO.syncException(new InputStream(new FileInputStream(file)))
   }
+
+  // Dear god:
+  //
+  // scala>       {
+  //          |     println("Started")
+  //          |     try {
+  //          |       try throw new Error("Primary error")
+  //          |       finally throw new Error("Secondary error")
+  //          |     } catch {
+  //          |       case e : Error => println(e)
+  //          |     }
+  //          |     println("Ended")
+  //          |   }
+  // Started
+  // java.lang.Error: Secondary error
+  // Ended
+  // => You can use lose Exceptions
+  //
+  // Safe resources if pure FP:
+  // val acquire: IO[Exception, FileHandle]
+  // val release: FileHandle => IO[Nothing, Unit]
+  // val use    : FileHandle => IO[Exception, Result]
+  // acquire.bracket(release)(use)
+  // ZIO => 1) acquire is uninterruptible
+  //        2) if acquire succeeds, then release will be called (and it is infallible)
+  //        3) release is uninterruptible
+  //        (use is interruptible)
 
   //
   // EXERCISE 1
@@ -803,8 +849,10 @@ object zio_resources {
   def tryCatch1(): Unit =
     try throw new Exception("Uh oh")
     finally println("On the way out...")
+
   val tryCatch2: IO[Exception, Unit] =
-    ???
+    IO.fail(new Exception("Uh oh"))
+      .bracket(_ => IO.sync(println("On the way out...")))(IO.now)
 
   //
   // EXERCISE 2
@@ -821,10 +869,22 @@ object zio_resources {
 
     for {
       stream <- InputStream.openFile(file)
-      bytes  <- readAll(stream, Nil)
+      bytes <- readAll(stream, Nil)
     } yield bytes
   }
-  def readFile2(file: File): IO[Exception, List[Byte]] = ???
+
+  def readFile2(file: File): IO[Exception, List[Byte]] = {
+    def readAll(is: InputStream, acc: List[Byte]): IO[Exception, List[Byte]] =
+      is.read.flatMap {
+        case None => IO.now(acc.reverse)
+        case Some(byte) => readAll(is, byte :: acc)
+      }
+
+    InputStream.openFile(file).bracket(_.close.attempt.void)(readAll(_, Nil))
+    //                                 ^ finaliser cannot fail, but close can have an exception
+    //                                   with attempt (=> Either) and void you throw that away
+  }
+
 
   //
   // EXERCISE 3
@@ -832,10 +892,20 @@ object zio_resources {
   // Implement the `tryCatchFinally` method using `bracket`.
   //
   def tryCatchFinally[E, A]
-    (try0: IO[E, A])
-    (catch0: PartialFunction[E, IO[E, A]])
-    (finally0: IO[Nothing, Unit]): IO[E, A] =
-      ???
+  (try0: IO[E, A])
+  (catch0: PartialFunction[E, IO[E, A]])
+  (finally0: IO[Nothing, Unit]): IO[E, A] =
+    try0.catchSome(catch0).ensuring(finally0)
+    // Medium way:
+    //try0.catchSome(catch0).bracket(_ => finally0)(IO.now)
+    // Hard way:
+    //try0.redeem(err => catch0.lift(err) match {
+    //  case None => IO.fail(err)
+    //  case Some(io) => io
+    //}, IO.now)
+    //try0.catchSome(catch0).ensuring(finally0)
+  //
+  // => less powerful than bracket
 
   //
   // EXERCISE 4
@@ -1010,11 +1080,162 @@ object zio_interop {
 }
 
 object zio_ref {
+  implicit class FixMe[A](a: A) {
+    def ? = ???
+  }
 
+  //
+  // EXERCISE 1
+  //
+  // Using the `Ref.apply` constructor, create a `Ref` that is initially `0`.
+  //
+  val makeZero: IO[Nothing, Ref[Int]] = Ref(0)
+  // Can be thought of as a better, functional var
+  // It is volatile, and can be changed atomically
+
+  //
+  // EXERCISE 2
+  //
+  // Using the `get` and `set` methods of the `Ref` you created, change the
+  // value to be 10 greater than its initial value
+  val incrementedBy10: IO[Nothing, Int] =
+    for {
+      ref   <- makeZero
+      value <- (ref.get : IO[Nothing, Int])
+      _     <- (ref.set(value + 10) : IO[Nothing, Unit])
+      value <- (ref.get : IO[Nothing, Int])
+    } yield value
+  // ref is still subject to race conditions if you use get and set
+
+  //
+  // EXERCISE 3
+  //
+  // Using the `update` method of `Ref`, atomically increment the value by 10.
+  // Return the new value.
+  //
+  val atomicallyIncrementedBy10: IO[Nothing, Int] =
+    for {
+      ref   <- makeZero
+      value <- (ref.update(_ + 10) : IO[Nothing, Int])
+    } yield value
+
+  //
+  // EXERCISE 4
+  //
+  // Using the `modify` method of `Ref` to atomically increment the value by 10,
+  // but return the old value.
+  //
+  val atomicallyIncrementedBy10PlusGet: IO[Nothing, Int] =
+    for {
+      ref   <- makeZero
+      value <- (ref.modify(v => (v, v + 10)) : IO[Nothing, Int])
+    } yield value
 }
 
 object zio_promise {
+  implicit class FixMe[A](a: A) {
+    def ? = ???
+  }
 
+  // Promise[E, A]
+
+  //
+  // EXERCISE 1
+  //
+  // Using the `make` method of `Promise`, construct a promise that cannot
+  // fail but can be completed with an integer.
+  //
+  val makeIntPromise: IO[Nothing, Promise[Nothing, Int]] = Promise.make
+
+  //
+  // EXERCISE 2
+  //
+  // Using the `complete` method of `Promise`, complete a promise constructed
+  // with `makeIntPromise`.
+  //
+  val completed1: IO[Nothing, Boolean] =
+    for {
+      promise <- makeIntPromise
+      completed <- (promise.complete(42) : IO[Nothing, Boolean])
+    } yield completed
+
+  //
+  // EXERCISE 3
+  //
+  // Using the `error` method of `Promise`, try to complete a promise
+  // constructed with `makeIntPromise`. Explain your findings.
+  //
+  val errored1: IO[Nothing, Boolean] =
+    for {
+      promise   <- makeIntPromise
+      completed <- (promise ? : IO[Nothing, Boolean]) // Can't do this!
+    } yield completed
+
+  //
+  // EXERCISE 4
+  //
+  // Using the `error` method of `Promise`, complete a new promise that
+  // you construct with `Promise.make` which can fail for any `Error` or
+  // produce a `String`.
+  //
+  val errored2: IO[Nothing, Boolean] =
+    for {
+      promise   <- Promise.make[Error, String]
+      completed <- (promise.error(new Error) : IO[Nothing, Boolean])
+    } yield completed
+
+  //
+  // EXERCISE 5
+  //
+  // Using the `interrupt` method of `Promise`, complete a new promise that
+  // you construct with `Promise.make` which can fail for any `Error` or
+  // produce a `String`.
+  //
+  val interrupted: IO[Nothing, Boolean] =
+  for {
+    promise   <- Promise.make[Error, String]
+    completed <- (promise.interrupt(new Error) : IO[Nothing, Boolean])
+  } yield completed
+
+  //
+  // EXERCISE 6
+  //
+  // Using the `get` method of `Promise`, retrieve a value computed from inside
+  // another fiber.
+  //
+  val handoff1: IO[Nothing, Int] =
+    for {
+      promise <- Promise.make[Nothing, Int]
+      _       <- promise.complete(42).delay(10.milliseconds).fork // complete the promise (delayed) in abother Fiber
+      value   <- (promise.get : IO[Nothing, Int])
+    } yield value
+  // get will suspend until the Promise is completed
+
+  //
+  // EXERCISE 7
+  //
+  // Using the `get` method of `Promise`, try to retrieve a value from a promise
+  // that was failed in another fiber.
+  //
+  val handoff2: IO[Error, Int] =
+  for {
+    promise <- Promise.make[Error, Int]
+    _       <- promise.error(new Error).delay(10.milliseconds).fork
+    value   <- (promise.get : IO[Error, Int])
+  } yield value
+
+  //
+  // EXERCISE 8
+  //
+  // Using the `get` method of `Promise`, try to retrieve a value from a promise
+  // that was interrupted in another fiber.
+  //
+  val handoff3: IO[Error, Int] =
+  for {
+    promise <- Promise.make[Error, Int]
+    _       <- promise.interrupt.delay(10.milliseconds).fork
+    value   <- (promise.get : IO[Error, Int])
+  } yield value
 }
 
 object zio_queue {
