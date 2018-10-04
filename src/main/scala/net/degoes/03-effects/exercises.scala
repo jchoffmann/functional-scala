@@ -1330,7 +1330,9 @@ object zio_queue {
   // Using `Queue`, `Ref`, and `Promise`, implement an "actor" like construct
   // that can atomically update the values of a counter.
   //
-  case class Increment(amount: Int)
+  // Could replace Int with:
+  //sealed trait Message
+  //case class Increment(amount: Int) extends Message
   val makeCounter: IO[Nothing, Int => IO[Nothing, Int]] =
   //                           ^ the actor is just a function, in this case a counter
   //                             (no contamination of the implementation into the interface)
