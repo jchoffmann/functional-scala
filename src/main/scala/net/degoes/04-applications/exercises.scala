@@ -11,7 +11,7 @@ import Scalaz._
 
 object exercises extends App {
   implicit class FixMe[A](a: A) {
-    def ? = ???
+    def ?[B] = ???
   }
 
   case class CrawlState[E, A](visited: Set[URL], crawl: Crawl[E, A])
@@ -250,7 +250,7 @@ object exercises extends App {
   // EXERCISE 6
   //
   // Create an instance of the `Console` type class for `IO[E, ?]` for any `E`
-  // by using `IO.syncTheHoff` and the Scala functions `println` and `scala.io.StdIn.readLine`.
+  // by using `IO.sync` and the Scala functions `println` and `scala.io.StdIn.readLine`.
   //
   implicit def ConsoleIO[E]: Console[IO[E, ?]] =
     new Console[IO[E, ?]] {
@@ -446,21 +446,10 @@ object exercises extends App {
       }
   }
 
-  // Private ctor: you don't want users to be able to construct URL directly, could be invalid
-//  final case class URL private (url: String) {
-//    final def relative(page: String): Option[URL] = URL(url + "/" + page)
-//  }
-  // "Smart ctor", one way to make illegal states unrepresentable
-//  object URL {
-//    def apply(url: String): Option[URL] =
-//      scala.util.Try(new java.net.URI(url).parseServerAuthority()).toOption match {
-//        case None => None
-//        case Some(_) => Some(new URL(url))
-//      }
-//  }
-  // better solution: Use ADT
-  // or this (import x): "io.lemonlabs" %% "scala-uri" % "1.3.1"
-  final case class URL private (parsed: io.lemonlabs.uri.Url) {
+  // Import this for better fiddling with Urls: "io.lemonlabs" %% "scala-uri" % "1.3.1"
+  final case class URL private (parsed: io.lemonlabs.uri.Url) { // Private ctor: you don't want users to be able to construct URL directly, could be invalid
+                                                                // "Smart ctor", one way to make illegal states unrepresentable
+                                                                // Other/better solution: Use ADTs and bake unrepresentable states into types
     import io.lemonlabs.uri._
 
     final def relative(page: String): Option[URL] =
@@ -491,12 +480,13 @@ object exercises extends App {
   }
 
   // this is doing blocking IO, we shouldn't be doing this
-  def getURLOld(url: URL): IO[Exception, String] =
-    IO.syncException(scala.io.Source.fromURL(url.url)(scala.io.Codec.UTF8).mkString)
+  //def getURL(url: URL): IO[Exception, String] =
+  //  IO.syncException(scala.io.Source.fromURL(url.url)(scala.io.Codec.UTF8).mkString)
   //                 ^ blocking IO (better to use netty async or something)
 
   // perform the work in a separate thread or threadpool
   private val blockingPool = java.util.concurrent.Executors.newCachedThreadPool()
+
   def getURL(url: URL): IO[Exception, String] =
     for {
       promise <- Promise.make[Exception, String]
