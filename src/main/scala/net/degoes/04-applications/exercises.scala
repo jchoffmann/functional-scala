@@ -154,7 +154,7 @@ object exercises extends App {
   def crawlIOPar[E: Monoid, A: Monoid](
     seeds     : Set[URL],
     router    : URL => Set[URL],
-    processor : (URL, String) => IO[E, A]): IO[Exception, Crawl[E, A]] = {
+    processor : (URL, String) => IO[E, A]): IO[Nothing, Crawl[E, A]] = {
     def loop(seeds: Set[URL], ref: Ref[CrawlState[E, A]]): IO[Nothing, Unit] =
       ref.update(_ |+| CrawlState.visited(seeds)) *>
         (IO.parTraverse(seeds)(seed => // <== now we're doing everything in parallel
@@ -190,7 +190,7 @@ object exercises extends App {
     seeds     : Set[URL],
     router    : URL => Set[URL],
     processor : (URL, String) => IO[E, A],
-    getURL    : URL => IO[Exception, String] = getURL(_)): IO[Exception, Crawl[E, A]] = {
+    getURL    : URL => IO[Exception, String] = getURL(_)): IO[Nothing, Crawl[E, A]] = {
     def loop(seeds: Set[URL], ref: Ref[CrawlState[E, A]]): IO[Nothing, Unit] =
       ref.update(_ |+| CrawlState.visited(seeds)) *>
         (IO.parTraverse(seeds)(seed => // <== now we're doing everything in parallel
