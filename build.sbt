@@ -36,10 +36,11 @@ scalacOptions ++= Seq(
 javacOptions ++= Seq("-Xlint:unchecked", "-Xlint:deprecation", "-source", "1.7", "-target", "1.7")
 
 val CatsEffectVersion = "1.0.0-RC3"
-val ScalaZVersion     = "7.2.23"
+val ScalaZVersion     = "7.2.26"
 val ZIOVersion        = "0.2.9"
 
 libraryDependencies ++= Seq(
+  "io.lemonlabs" %% "scala-uri" % "1.3.1",
   // -- testing --
   "org.scalacheck"  %% "scalacheck"         % "1.13.4"  % "test",
   "org.scalatest"   %% "scalatest"          % "3.0.1"   % "test",
