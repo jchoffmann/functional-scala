@@ -392,7 +392,7 @@ object exercises extends App {
         TestIO(IO.point(a))
 
       def bind[A, B](fa: TestIO[E, A])(f: A => TestIO[E, B]): TestIO[E, B] =
-        TestIO(fa.run.flatMap(f.andThen(_.run)))
+        TestIO(fa.run.flatMap(f.andThen(_.run))) // You can introspect monadic data structures only up to the first flatmap
 
       def printLine(line: String): TestIO[E, Unit] =
         TestIO(ref.update(s => s.copy(output = line :: s.output)).void)
@@ -431,6 +431,24 @@ object exercises extends App {
     output = List(),
     random = List(0)
   )).map(_.renderOutput)
+
+  //
+  // Logging machinery:
+  def log(text: => String): IO[Nothing, Unit] = ??? // never use monad transformers, writer, ...
+  // final tagless:
+  trait MyLogging[F[_]] {
+    def log(text: => String): F[Unit]
+  }
+  object MyLogging {
+    def apply[F[_]](implicit F: MyLogging[F]): MyLogging[F] = F
+  }
+  def loggedRandom[F[_]: MyLogging: Monad](random: Random[F]): Random[F] =
+    new Random[F] {
+      def nextInt(max: Int): F[Int] =
+        MyLogging[F].log("Computing nextInt with + " + max) *> random.nextInt(max).flatMap[Int](
+          i => MyLogging[F].log("Computed: " + i).map(_ => i)
+        )
+    }
 
 
   final case class Crawl[E, A](error: E, value: A) { // Just a fancy name for Tuple2 with named args

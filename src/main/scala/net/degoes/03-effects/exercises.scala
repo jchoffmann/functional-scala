@@ -645,6 +645,20 @@ object zio_effects {
   // Using Nothing, still computation can fail if executor has been shut down, but we consider that as a nonrecoverable error
 
   //
+  // EXERCISE 7.5
+  //
+  // Wrap the following Java-esque callback API into an `IO` using `IO.async`.
+  //
+  def readChunk(success: Array[Byte] => Unit, failure: Throwable => Unit): Unit = ???
+  val readChunkIO: IO[Throwable, Array[Byte]] =
+    IO.async[Throwable, Array[Byte]]((k: ExitResult[Throwable, Array[Byte]] => Unit) =>
+      readChunk(
+        success = (chunk: Array[Byte]) => k(ExitResult.Completed(chunk)),
+        failure = (error: Throwable)   => k(ExitResult.Failed(error))
+      )
+    )
+
+  //
   // EXERCISE 8
   //
   // Translate the following procedural program into ZIO.
