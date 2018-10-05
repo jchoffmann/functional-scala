@@ -6,46 +6,11 @@ import scalaz._
 import Scalaz._
 
 object exercises {
-
-  trait NaturalTransformation[F[_], G[_]] { // functions where the args have kind `* -> *`
-    def apply[A](fa: F[A]): G[A]
-  }
-  type ~> [F[_], G[_]] = NaturalTransformation[F, G]
-  def headOption: List ~> Option =
-    new NaturalTransformation[List, Option] {
-      def apply[A](fa: List[A]): Option[A] =
-        fa.headOption
-    }
-  def right[A]: Either[A, ?] ~> Option = ???
-  def left[B]: Either[?, B] ~> Option =
-    new NaturalTransformation[Either[?, B], Option] {
-      def apply[A](fa: Either[A, B]): Option[A] =
-        fa match {
-          case Left(a) => Some(a)
-          case Right(_) => None
-        }
-    }
-  left(Left(42))    // Some(42)
-  left(Left("bar")) // Some("bar")
-  left(Right(42))   // None
-  import scalaz.zio.IO
-  def fromOption: Option ~> IO[Unit, ?] =
-    new NaturalTransformation[Option, IO[Unit, ?]] {
-      def apply[A](fa: Option[A]): IO[Unit, A] =
-        fa match {
-          case None    => (IO.fail(()) : IO[Unit, A]) // only IO.fail, we don't have an a
-          case Some(a) => (IO.now(a)   : IO[Unit, A])
-        }
-    } // for all as, we can transform an Option to an IO[Unit, A]
-
-  // Free monad: Given a functor you can get a monad
   object free {
-    sealed trait Free[F[_], A] { self => // each one is an individual instruction in your program, A is the return value
-      def map[B](f: A => B): Free[F, B] =
-        self.flatMap(f.andThen(Free.point[F, B](_)))
+    sealed trait Free[F[_], A] { self =>
+      final def map[B](f: A => B): Free[F, B] = self.flatMap(f.andThen(Free.point[F, B](_)))
 
-      final def flatMap[B](f: A => Free[F, B]): Free[F, B] =
-        Free.FlatMap(self, f)
+      final def flatMap[B](f: A => Free[F, B]): Free[F, B] = Free.FlatMap(self, f)
 
       final def <* [B](that: Free[F, B]): Free[F, A] =
         self.flatMap(a => that.map(_ => a))
@@ -53,17 +18,16 @@ object exercises {
       final def *> [B](that: Free[F, B]): Free[F, B] =
         self.flatMap(_ => that)
 
-      final def fold[G[_]: Monad](interpreter: F ~> G): G[A] = // ~> natural transformation
+      final def fold[G[_]: Monad](interpreter: F ~> G): G[A] =
         self match {
           case Free.Return(value0)  => value0().point[G]
           case Free.Effect(fa)      => interpreter(fa)
           case Free.FlatMap(fa0, f) => fa0.fold(interpreter).flatMap(a0 => f(a0).fold(interpreter))
-
         }
     }
     object Free {
       case class Return[F[_], A](value0: () => A) extends Free[F, A] {
-        lazy val value = value0
+        lazy val value = value0()
       }
       case class Effect[F[_], A](effect: F[A]) extends Free[F, A]
       case class FlatMap[F[_], A0, A](fa0: Free[F, A0], f: A0 => Free[F, A]) extends Free[F, A]
@@ -71,7 +35,7 @@ object exercises {
       def point[F[_], A](a: => A): Free[F, A] = Return(() => a)
       def lift[F[_], A](fa: F[A]): Free[F, A] = Effect(fa)
     }
-    // How to use the free monad:
+
     sealed trait ConsoleF[A]
     final case object ReadLine extends ConsoleF[String]
     final case class PrintLine(line: String) extends ConsoleF[Unit]
@@ -83,20 +47,21 @@ object exercises {
       for {
         _    <- printLine("Good morning! What is your name?")
         name <- readLine
-        _    <- printLine(s"Good to meet you, $name!")
+        _    <- printLine("Good to meet you, " + name + "!")
       } yield name
 
-   import scalaz.zio.interop.scalaz72._
-   val programIO: IO[Nothing, String] =
-     program.fold[IO[Nothing, ?]](new NaturalTransformation[ConsoleF, IO[Nothing, ?]] {
-       def apply[A](consoleF: ConsoleF[A]): IO[Nothing, A] =
-         consoleF match {
-           case ReadLine        => IO.sync(scala.io.StdIn.readLine())
-           case PrintLine(line) => IO.sync(println(line))
-         }
-     })
+    import scalaz.zio.IO
+    import scalaz.zio.interop.scalaz72._
 
-    // Free monad approach to testing
+    val programIO: IO[Nothing, String] =
+      program.fold[IO[Nothing, ?]](new NaturalTransformation[ConsoleF, IO[Nothing, ?]] {
+        def apply[A](consoleF: ConsoleF[A]): IO[Nothing, A] =
+          consoleF match {
+            case ReadLine => IO.sync(scala.io.StdIn.readLine())
+            case PrintLine(line) => IO.sync(println(line))
+          }
+      })
+
     case class TestData(input: List[String], output: List[String])
     case class State[S, A](run: S => (S, A)) {
       def eval(s: S): A = run(s)._2
@@ -138,29 +103,31 @@ object exercises {
 
   object design {
     /**
-      Loyalty Points Management
+    Loyalty Points Management
 
-      - Entities - Data
-        - Customer
-        - Loyalty Points
-        - LP Account
-        - LP Issuer - places you can get points from
-        - LP Receiver - places you can spend points
-        - Notification
-        - LP Offers
-        - Email ?
-        - Tiers?
+    - Entities - Data
+      - Customer
+      - Loyalty Points
+      - Loyalty Point Account
+      - Loyalty Points Issuer - places you can get points from
+      - Loyalty Points Receiver - places you can spend points
+      - Notification
+      - Loyalty Point Offers
+      - Email ?
+      - Tiers ?
 
-      - Services - Functions / Operations
-        - Customer performs some action to earn LP from an issuer
-        - Customer spends loyalty points at a receiver
-        - Customer transfers LP to another account
-        - Customer sees account details including LP balance
-        - Customer opens / closes LP account
-        - Customer signs up / opt-ins for LP offers
-        - Notification & transactional email
-      */
-    sealed abstract class DatabaseError extends Exception // Leads to good type inference, auto widening
+    - Services - Functions / Operations
+      - Customer performs some action to earn loyalty points from an issuer
+      - Customer spends loyalty points at a receiver
+      - Customer transfers loyalty points to another account
+      - Customer sees account details including loyalty point balance
+      - Customer opens / closes loyalty point account
+      - Customer signs up / opt-ins for loyalty point offers
+      - Notifications & transactional email
+    */
+    import scalaz.zio._
+
+    sealed abstract class DatabaseError extends Exception
     trait Source[E, A] {
       def fold[Z](z: Z)(f: (Z, A) => Z): IO[E, Z]
     }
@@ -168,7 +135,6 @@ object exercises {
     type DatabaseSource[A] = Source[DatabaseError, A]
     type DatabaseDerived[A, B] = DatabaseSource[A] => Database[B]
 
-    // ScalaZ 8
     trait Number[A] {
       def zero: A
       def one: A
@@ -185,29 +151,33 @@ object exercises {
       def * (r: A)(implicit N: Number[A]): A = N.times(l, r)
     }
 
-    final case class Customer[AccountId, Num](
-                               name: String,
-                               email: String,
-                               account: Account[AccountId, Num])
-    final case class Account[AccountId, Num](
-                            id: AccountId,
-                            transactions: DatabaseSource[Transaction[AccountId, Num]] // fully auditable, event sourcing
-                            )
-    object Account { // these will require some capabilities on A
+    final case class Customer[AccountID, Num](
+      name    : String,
+      email   : String,
+      account : Account[AccountID, Num]
+    )
+
+    final case class Account[AccountID, Num](
+      id    : AccountID,
+      txns  : DatabaseSource[Transaction[AccountID, Num]])
+
+    object Account {
       import Transaction._
       type TxnDerived[A, B] = DatabaseDerived[Transaction[A, B], B]
 
-      def balance[A, B: Number]: TxnDerived[A, B] =
+      def balance[A, B: Number] : TxnDerived[A, B] =
         _.fold[B](Number[B].zero) {
-          case (balance, Redeem(v, _))   => balance - v
-          case (balance, Earn(v, _))     => balance + v
+          case (balance, Redeem  (v, _)) => balance - v
+          case (balance, Earn    (v, _)) => balance + v
           case (balance, Transfer(v, _)) => balance - v
         }
-      def status[A, B]: TxnDerived[A, Status] =
+      def status[A, B] : TxnDerived[A, Status] =
         _.fold[Status](Status.Open) {
           case (status, _) => status
         }
-      def tier[A, B: Number: Order](tiers: Map[B, Tier]): TxnDerived[A, B] = ???
+
+      def tier[A, B: Number: Order](tiers: Map[B, Tier]) : TxnDerived[A, B] =
+        ???
 
       sealed trait Status
       object Status {
@@ -215,7 +185,7 @@ object exercises {
         case object Closed extends Status
       }
       sealed trait Tier
-      case object Tier {
+      object Tier {
         case object Silver   extends Tier
         case object Gold     extends Tier
         case object Platinum extends Tier
@@ -224,24 +194,22 @@ object exercises {
     final case class Reward()
     final case class Purchase(id: java.util.UUID, description: String, quantity: Int)
 
-    sealed trait Transaction[+AccountId, +Num] // appears in the context of the account, so don't need account ID
+    sealed trait Transaction[+AccountID, +Num]
     object Transaction {
-      final case class Redeem  [Num](amount: Num, reward: Reward) extends Transaction[Nothing, Num]
-      final case class Earn    [Num](amount: Num, purchase: Purchase) extends Transaction[Nothing, Num]
-      final case class Transfer[AccountId, Num](amount: Num, recipient: AccountId) extends Transaction[AccountId, Num]
+      final case class Redeem   [           Num](amount: Num, reward   : Reward   ) extends Transaction[Nothing  , Num]
+      final case class Earn     [           Num](amount: Num, purchase : Purchase ) extends Transaction[Nothing  , Num]
+      final case class Transfer [AccountID, Num](amount: Num, recipient: AccountID) extends Transaction[AccountID, Num]
     }
-
-    // Final tagless style, abstract over effects
 
     trait Confirmation
 
     sealed trait LoyaltyError
     object LoyaltyError {
-      case object InsufficientBalance extends LoyaltyError
-      case object InvalidReward extends LoyaltyError
-      case object InvalidPurchase extends LoyaltyError
-      case object InvalidAccount extends LoyaltyError
-      case object ClosedAccount extends LoyaltyError
+      final case object InsufficientBalance extends LoyaltyError
+      final case object InvalidReward extends LoyaltyError
+      final case object InvalidPurchase extends LoyaltyError
+      final case object InvalidAccount extends LoyaltyError
+      final case object ClosedAcccount extends LoyaltyError
     }
 
     trait LoyaltyTransactions[F[_]] {
@@ -249,41 +217,29 @@ object exercises {
 
       def redeem(accountID: AccountID, points: Long, reward: Reward): F[Either[LoyaltyError, Confirmation]]
 
-      def earn(accountID: AccountID, points: Long, reward: Purchase): F[Either[LoyaltyError, Confirmation]]
+      def earn(accountID: AccountID, points: Long, purchase: Purchase): F[Either[LoyaltyError, Confirmation]]
 
       def transfer(sourceAccountID: AccountID, transferAccountID: java.util.UUID, points: Long): F[Either[LoyaltyError, Confirmation]]
+
+      def balance(accountID: AccountID): F[Long]
     }
 
-    trait Batch[A] { // alternative to the free Monad
+    trait Batch[A] {
       def apply[F[_]: LoyaltyTransactions: Applicative]: F[A]
     }
-
-    // Use like this;
-    //atomic { new Batch[A] {
-    //  def apply[F[_]: LoyaltyTransactions]: F[A] =
-    //    LoyaltyTransactions[F].redeem(...) *>
-    //    (LoyaltyTransactions[F].earn(...) |@|
-    //    LoyaltyTransactions[F].transfer(...))((_, _))
-    //}}
-    // Applicative allows us to combine multiple operations, not only one, and can introspect the leaves of the program as the data structure is static
-    // Monad would make it hard, because you make decisions on the runtime valuee so you would need to implement the atomic guarantees yourself instead of relying on the database
-
-    trait LoyaltyProgram[F[_]] { // we could push failure to F, or reflect that in the type e.g. Either
+    trait LoyaltyProgram[F[_]] {
       type AccountID = java.util.UUID
 
       def atomic[A](batch: Batch[A]): F[A]
 
       def open: F[AccountID]
 
-      def close(accountID: AccountID): F[AccountID] // type implies that you cannot reopen an account
-
-      def balance(accountID: AccountID): F[Long]
+      def close(accountID: AccountID): F[AccountID]
     }
     object LoyaltyProgram {
       private object internal {
-        type AccountID = java.util.UUID
+        import java.util.UUID
 
-        // Data structure representing SQL statements that promises to return an A
         sealed trait Statement[A] { self =>
           final def map[B](f: A => B): Statement[B] =
             self.zipWith(Statement.point(()))((a, _) => f(a))
@@ -296,32 +252,35 @@ object exercises {
           final def *> [B](that: Statement[B]): Statement[B] = self.zip(that).map(_._2)
 
           final def <* [B](that: Statement[B]): Statement[A] = self.zip(that).map(_._1)
+
+          final def ifThenElse[B](f: A => Boolean)(ifTrue: Statement[B], ifFalse: Statement[B]): Statement[B] =
+            IfThenElse(self, f, ifTrue, ifFalse)
         }
         object Statement {
           final def point[A](a: => A): Statement[A] = Return(a)
         }
         final case class Return[A](value: A) extends Statement[A]
         final case class ZipWith[A, B, C](l: Statement[A], r: Statement[B], f: (A, B) => C) extends Statement[C]
-        final case class Earn(accountID: AccountID, points: Long, purchase: Purchase) extends Statement[Either[LoyaltyError, Confirmation]]
-        final case class Redeem(accountID: AccountID, points: Long, reward: Reward) extends Statement[Either[LoyaltyError, Confirmation]]
-        final case class Transfer(sourceAccountID: AccountID, transferAccountID: AccountID, points: Long) extends Statement[Either[LoyaltyError, Confirmation]]
+        final case class IfThenElse[A, B](statement: Statement[A], f: A => Boolean, ifTrue: Statement[B], ifFalse: Statement[B]) extends Statement[B]
+        final case class Earn(accountID: UUID, points: Long, purchase: Purchase) extends Statement[Either[LoyaltyError,Confirmation]]
+        final case class Redeem(accountID: UUID, points: Long, reward: Reward) extends Statement[Either[LoyaltyError,Confirmation]]
+        final case class Transfer(sourceAccountID: UUID, transferAccountID: UUID, points: Long) extends Statement[Either[LoyaltyError,Confirmation]]
+        final case class Balance(accountID: UUID) extends Statement[Long]
 
         implicit val LoyaltyTransactionsInstance: LoyaltyTransactions[Statement] with Applicative[Statement] =
           new LoyaltyTransactions[Statement] with Applicative[Statement] {
-            def point[A](a: => A): Statement[A] = Return(a)
-
-            def ap[A, B](fa: =>Statement[A])(f: =>Statement[A => B]): Statement[B] =
+            def point[A](a: => A): Statement[A] = Statement.point(a)
+            def ap[A, B](fa: => Statement[A])(f: => Statement[A => B]): Statement[B] =
               f.zipWith(fa)((f, a) => f(a))
-
-            def earn(accountID: AccountID, points: Long, purchase: Purchase): Statement[Either[LoyaltyError, Confirmation]] =
+            def earn(accountID: UUID, points: Long, purchase: Purchase): Statement[Either[LoyaltyError,Confirmation]] =
               Earn(accountID, points, purchase)
-
-            def redeem(accountID: AccountID, points: Long, reward: Reward): Statement[Either[LoyaltyError, Confirmation]] =
+            def redeem(accountID: UUID, points: Long, reward: Reward): Statement[Either[LoyaltyError,Confirmation]] =
               Redeem(accountID, points, reward)
-
-            def transfer(sourceAccountID: AccountID, transferAccountID: AccountID, points: Long): Statement[Either[LoyaltyError, Confirmation]] =
+            def transfer(sourceAccountID: UUID, transferAccountID: UUID, points: Long): Statement[Either[LoyaltyError,Confirmation]] =
               Transfer(sourceAccountID, transferAccountID, points)
+            def balance(accountID: UUID): Statement[Long] = Balance(accountID)
           }
+
       }
 
       implicit val LoyaltyProgramIO: LoyaltyProgram[IO[Exception, ?]] =
@@ -333,16 +292,16 @@ object exercises {
           type Query = String
 
           def interpret[A](statement: Statement[A]): (JStatement, ResultSet => IO[Exception, A]) =
-            ??? // construct SQL statements, compiler
-          // if you want to do optimisations, you would possibly need intermediate types lower level than Statements
+            ???
 
           def atomic[A](batch: Batch[A]): IO[Exception, A] = {
             val statement: Statement[A] = batch[Statement]
 
             val (jstatement, processor) = interpret(statement)
 
-            val resultSet = IO.syncException(jstatement.executeBatch()) *>
-              IO.syncException(jstatement.getResultSet)
+            val resultSet =
+              IO.syncException(jstatement.executeBatch()) *>
+              IO.syncException(jstatement.getResultSet())
 
             resultSet.flatMap(processor)
           }
@@ -350,8 +309,6 @@ object exercises {
           def open: IO[Exception, AccountID] = ???
 
           def close(accountID: AccountID): IO[Exception, AccountID] = ???
-
-          def balance(accountID: AccountID): IO[Exception, Long] = ???
         }
     }
   }
@@ -412,8 +369,30 @@ object exercises {
       }
 
       sealed trait ListF[+A, +B]
-      case object Nil extends ListF[Nothing, Nothing]
-      case class Cons[A, B](head: A, tail: B) extends ListF[A, B]
+      object ListF {
+        case object Nil extends ListF[Nothing, Nothing]
+        case class Cons[A, B](head: A, tail: B) extends ListF[A, B]
+
+        implicit def FunctorListF[A0]: Functor[ListF[A0, ?]] =
+          new Functor[ListF[A0, ?]] {
+            def map[A, B](fa: ListF[A0, A])(f: A => B): ListF[A0, B] = fa match {
+              case Nil => Nil
+              case Cons(head, tail) => Cons(head, f(tail))
+            }
+          }
+
+        type ListR[A] = Fix[ListF[A, ?]]
+        object ListR {
+          def nil[A]: ListR[A] = Fix[ListF[A, ?]](Nil)
+          def cons[A](head: A, tail: ListR[A]): ListR[A] = Fix[ListF[A, ?]](Cons(head, tail))
+        }
+
+        def foldRight[A, Z](list: ListR[A], z: Z)(f: (A, Z) => Z): Z =
+          list.cata[Z](_ match {
+            case Nil => z
+            case Cons(a, z) => f(a, z)
+          })
+      }
 
       final case class Fix[F[_]](unfix: F[Fix[F]]) { self =>
         def transformDown(f: F[Fix[F]] => F[Fix[F]])(implicit F: Functor[F]): Fix[F] =
@@ -422,7 +401,7 @@ object exercises {
         def transformUp(f: F[Fix[F]] => F[Fix[F]])(implicit F: Functor[F]): Fix[F] =
           Fix[F](f(unfix.map(_.transformUp(f))))
 
-        // missing: cata (catamorphism); F[A] => A == algebra
+        def cata[A](f: F[A] => A)(implicit F: Functor[F]): A = f(unfix.map(_.cata(f)))
       }
 
       type Json = Fix[JsonF]
@@ -455,18 +434,19 @@ object exercises {
           case j @ Arr(_) => j
           case j @ Obj(map) => map.get(old).fold(j)(v => Obj(map + (newf -> v)))
         }
-      //
-      // def collectFields: Json => List[String] =
-      //   (json: Json) => json match {
-      //     case Null => Nil
-      //     case Bool(value) => Nil
-      //     case Str(value) => Nil
-      //     case Num(value) => Nil
-      //     case Arr(value) => value.flatMap(collectFields)
-      //     case Obj(map0) => map0.keys.toList ++ map0.values.toList.flatMap(collectFields)
-      //   }
 
-      Example.transformDown(renameField("street", "street_name"))
+      def collectFields: JsonF[List[String]] => List[String] =
+        (jsonF: JsonF[List[String]]) => jsonF match {
+          case Null => Nil
+          case Bool(_) => Nil
+          case Str(_) => Nil
+          case Num(_) => Nil
+          case Arr(value) => value.flatten
+          case Obj(map) => map.keys.toList ++ map.values.toList.flatten
+        }
+
+      val transformed : Json = Example.transformDown(renameField("street", "street_name"))
+      val fields : List[String] = Example.cata(collectFields)
     }
   }
 
@@ -505,18 +485,18 @@ object exercises {
     sealed trait Parser[+E, +A] { self =>
       import Parser._
 
-      def map[B](f: A => B): Parser[E, B] = Map[E, A, B](self, f)
+      final def map[B](f: A => B): Parser[E, B] = Map[E, A, B](self, f)
 
-      def || [E1 >: E, B](that: Parser[E1, B]): Parser[E1, Either[A, B]] =
+      final def || [E1 >: E, B](that: Parser[E1, B]): Parser[E1, Either[A, B]] =
         Alternative(self, that)
 
-      def * : Parser[E, List[A]] = Repeat(self)
+      final def * : Parser[E, List[A]] = Repeat(self)
 
-      def ~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, (A, B)] = Zip(self, that)
+      final def ~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, (A, B)] = Zip(self, that)
 
-      def <~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, A] = (self ~ that).map(_._1)
+      final def <~ [E1 >: E, B](that: Parser[E1, B]): Parser[E1, A] = (self ~ that).map(_._1)
 
-      def ~> [E1 >: E, B](that: Parser[E1, B]): Parser[E1, B] = (self ~ that).map(_._2)
+      final def ~> [E1 >: E, B](that: Parser[E1, B]): Parser[E1, B] = (self ~ that).map(_._2)
     }
     object Parser {
       def fail[E](e: E): Parser[E, Nothing] = Fail(e)
@@ -561,47 +541,127 @@ object exercises {
   }
 
   object hoas {
-    trait Dsl[Expr[_]] {
-      def int(v: Int): Expr[Int]
-      def plus(l: Expr[Int], r:Expr[Int]): Expr[Int]
-      def minus(l: Expr[Int], r:Expr[Int]): Expr[Int]
-      def times(l: Expr[Int], r: Expr[Int]): Expr[Int]
-      def let[A, B](value: Expr[A], body: Expr[A] => Expr[B]): Expr[B]
-    }
+    object foas1 {
+      // Problem 1: Dynamically typed DSL
+      // Problem 2: Reference values that have not been declared
+      trait Dsl[A] {
+        def int(v: Int): A
+        def plus(l: A, r: A): A
+        def minus(l: A, r: A): A
+        def times(l: A, r: A): A
+        def value(identifier: String): A
+        def let(identifer: String, value: A, body: A): A
+      }
+      object Dsl {
+        def apply[A: Dsl] = implicitly[Dsl[A]]
+      }
+      implicit class DslSyntax[A](l: A) {
+        def + (r: A)(implicit A: Dsl[A]): A = A.plus(l, r)
+        def - (r: A)(implicit A: Dsl[A]): A = A.minus(l, r)
+        def * (r: A)(implicit A: Dsl[A]): A = A.times(l, r)
+      }
+      def int[A: Dsl](v: Int) = Dsl[A].int(v)
+      def value[A: Dsl](s: String) = Dsl[A].value(s)
+      def let[A: Dsl](ident: String, value: A)(body: A): A =
+        Dsl[A].let(ident, value, body)
 
-    object Dsl {
-      def apply[F[_]: Dsl] = implicitly[Dsl[F]]
-      import scalaz.zio._
-      implicit def DslIO[E]: Dsl[IO[E, ?]] =
-        new Dsl[IO[E, ?]] {
-          override def int(v: Int): IO[E, Int] = IO.now(v)
-          override def plus(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
-            l.seqWith(r)(_ + _)
-          override def minus(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
-            l.seqWith(r)(_ - _)
-          override def times(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
-            l.seqWith(r)(_ * _)
-          override def let[A, B](value: IO[E, A],
-                                 body: IO[E, A] => IO[E, B]): IO[E, B] =
-            value.flatMap(a => body(IO.now(a)))
-        }
-    }
-    // lambda
-    implicit class DslSyntax[F[_]](l: F[Int]) {
-      def + (r: F[Int])(implicit A: Dsl[F]): F[Int] = A.plus(l, r)
-      def - (r: F[Int])(implicit A: Dsl[F]): F[Int] = A.minus(l, r)
-      def * (r: F[Int])(implicit A: Dsl[F]): F[Int] = A.times(l, r)
-    }
-    def int[F[_]: Dsl](v: Int) = Dsl[F].int(v)
-    def let[F[_]: Dsl, A, B](value: F[A])(body: F[A] => F[B]) = Dsl[F].let(value, body)
-    def program[F[_]: Dsl] =
-      let(int(10))(a =>
-        let(int(20))(b =>
-          a * a + b * b
+      def program[A: Dsl]: A =
+        let(
+          "a", int(1)
+        )(
+          value("a") * value("a")
         )
-      )
+    }
+    object foas2 {
+      // Problem 1: Reference values that have not been declared
+      trait Dsl[Expr[_]] {
+        def int(v: Int): Expr[Int]
+        def plus(l: Expr[Int], r: Expr[Int]): Expr[Int]
+        def minus(l: Expr[Int], r: Expr[Int]): Expr[Int]
+        def times(l: Expr[Int], r: Expr[Int]): Expr[Int]
+        def value(identifier: String): Expr[Int]
+        def let[A, B](identifer: String, value: Expr[A], body: Expr[B]): Expr[B]
+      }
+      object Dsl {
+        def apply[F[_]: Dsl] = implicitly[Dsl[F]]
+      }
+      implicit class DslIntSyntax[F[_]](l: F[Int]) {
+        def + (r: F[Int])(implicit F: Dsl[F]): F[Int] = F.plus(l, r)
+        def - (r: F[Int])(implicit F: Dsl[F]): F[Int] = F.minus(l, r)
+        def * (r: F[Int])(implicit F: Dsl[F]): F[Int] = F.times(l, r)
+      }
+      def int[F[_]: Dsl](v: Int): F[Int] = Dsl[F].int(v)
+      def value[F[_]: Dsl](s: String) = Dsl[F].value(s)
+      def let[F[_]: Dsl, A, B](ident: String, value: F[A])(body: F[B]): F[B] =
+        Dsl[F].let(ident, value, body)
 
-    import scalaz.zio.IO
-    val programIO: IO[Nothing, Int] = program[IO[Nothing, ?]]
+      def program[F[_]: Dsl]: F[Int] =
+        let(
+          "a", int(1)
+        )(
+          value("asdf") * value("a") // Uh oh!!!!!!!!!!
+        )
+    }
+
+    object hoas {
+      // Problem 1: Reference values that have not been declared
+      trait Dsl[Expr[_]] {
+        def int(v: Int): Expr[Int]
+        def plus(l: Expr[Int], r: Expr[Int]): Expr[Int]
+        def minus(l: Expr[Int], r: Expr[Int]): Expr[Int]
+        def times(l: Expr[Int], r: Expr[Int]): Expr[Int]
+        def lam[A, B](v: Expr[A] => Expr[B]): Expr[A => B]
+        def ap[A, B](f: Expr[A => B], a: Expr[A]): Expr[B]
+        def let[A, B](value: Expr[A], body: Expr[A] => Expr[B]): Expr[B]
+      }
+      object Dsl {
+        def apply[F[_]: Dsl] = implicitly[Dsl[F]]
+
+        import scalaz.zio._
+
+        implicit def DslIO[E]: Dsl[IO[E, ?]] =
+          new Dsl[IO[E, ?]] {
+            def int(v: Int): IO[E, Int] = IO.now(v)
+            def plus(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
+              l.seqWith(r)(_ + _)
+            def minus(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
+              l.seqWith(r)(_ - _)
+            def times(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
+              l.seqWith(r)(_ * _)
+            def let[A, B](value: IO[E, A], body: IO[E, A] => IO[E, B]): IO[E, B] =
+              value.flatMap(a => body(IO.now(a)))
+            def ap[A, B](f: IO[E, A => B], a: IO[E, A]): IO[E,B] = f.seqWith(a)((f, a) => f(a))
+            def lam[A, B](v: IO[E, A] => IO[E, B]): IO[E,A => B] = ???
+          }
+      }
+      implicit class DslIntSyntax[F[_]](l: F[Int]) {
+        def + (r: F[Int])(implicit F: Dsl[F]): F[Int] = F.plus(l, r)
+        def - (r: F[Int])(implicit F: Dsl[F]): F[Int] = F.minus(l, r)
+        def * (r: F[Int])(implicit F: Dsl[F]): F[Int] = F.times(l, r)
+      }
+      implicit class DslLambdaSyntax[F[_], A, B](f: F[A => B]) {
+        def apply(a: F[A])(implicit F: Dsl[F]): F[B] = F.ap(f, a)
+      }
+      def int[F[_]: Dsl](v: Int): F[Int] = Dsl[F].int(v)
+      //def value[F[_]: Dsl](s: String) = Dsl[F].value(s)
+      def let[F[_]: Dsl, A, B](value: F[A])(body: F[A] => F[B]): F[B] =
+        Dsl[F].let(value, body)
+      def lam[F[_]: Dsl, A, B](f: F[A] => F[B]): F[A => B] =
+        Dsl[F].lam(f)
+
+      def program[F[_]: Dsl]: F[Int] =
+        let(int(1))(a =>
+          let(int(10))(b =>
+            a * a + b * b
+          )
+        )
+
+      def program2[F[_]: Dsl]: F[Int] =
+        lam((e: F[Int]) => e * e).apply(int(2))
+
+      import scalaz.zio.IO
+
+      val programIO: IO[Nothing, Int] = program[IO[Nothing, ?]]
+    }
   }
 }
