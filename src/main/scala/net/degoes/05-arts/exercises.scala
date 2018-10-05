@@ -283,7 +283,7 @@ object exercises {
       private object internal {
         type AccountID = java.util.UUID
 
-        // Data structure
+        // Data structure representing SQL statements that promises to return an A
         sealed trait Statement[A] { self =>
           final def map[B](f: A => B): Statement[B] =
             self.zipWith(Statement.point(()))((a, _) => f(a))
@@ -333,7 +333,7 @@ object exercises {
           type Query = String
 
           def interpret[A](statement: Statement[A]): (JStatement, ResultSet => IO[Exception, A]) =
-            ??? // construct SQL statements
+            ??? // construct SQL statements, compiler
           // if you want to do optimisations, you would possibly need intermediate types lower level than Statements
 
           def atomic[A](batch: Batch[A]): IO[Exception, A] = {
@@ -356,20 +356,150 @@ object exercises {
     }
   }
 
-
   object fixpoint {
-    sealed trait Json[+A]
-    object Json {
-      case object Null extends Json[Nothing]
-      case class Bool[A](boolean: Boolean) extends Json[A]
-      case class Str[A](string: String) extends Json[A]
-      case class Num[A](number: BigDecimal) extends Json[A]
-      case class Arr[A](array: List[A]) extends Json[A]
-      case class Obj[A](obj: Map[String, A]) extends Json[A]
+    object classic {
+      sealed trait Json
+      case object Null extends Json
+      case class Bool(value: Boolean) extends Json
+      case class Str(value: String) extends Json
+      case class Num(value: BigDecimal) extends Json
+      case class Arr(value: List[Json]) extends Json
+      case class Obj(value: Map[String, Json]) extends Json
 
-      implicit val TraverseJson: Traverse[Json] = ???
+      def renameField(old: String, newf: String): Json => Json =
+        (json: Json) => json match {
+          case Null => json
+          case Bool(value) => json
+          case Str(value) => json
+          case Num(value) => json
+          case Arr(value) => Arr(value.map(renameField(old, newf)))
+          case Obj(map0) =>
+            val map = map0.mapValues(renameField(old, newf))
+
+            map.get(old).fold(json)(v2 => Obj(map + (newf -> v2)))
+        }
+
+      def collectFields: Json => List[String] =
+        (json: Json) => json match {
+          case Null => Nil
+          case Bool(value) => Nil
+          case Str(value) => Nil
+          case Num(value) => Nil
+          case Arr(value) => value.flatMap(collectFields)
+          case Obj(map0) => map0.keys.toList ++ map0.values.toList.flatMap(collectFields)
+        }
+    }
+    object fixed {
+      sealed trait JsonF[+A]
+      case object Null extends JsonF[Nothing]
+      case class Bool(value: Boolean) extends JsonF[Nothing]
+      case class Str(value: String) extends JsonF[Nothing]
+      case class Num(value: BigDecimal) extends JsonF[Nothing]
+      case class Arr[A](value: List[A]) extends JsonF[A]
+      case class Obj[A](value: Map[String, A]) extends JsonF[A]
+      object JsonF {
+        implicit val FunctorJsonF: Functor[JsonF] =
+          new Functor[JsonF] {
+            def map[A, B](fa: JsonF[A])(f: A => B): JsonF[B] = fa match {
+              case Null => Null
+              case Bool(v) => Bool(v)
+              case Str(v) => Str(v)
+              case Num(v) => Num(v)
+              case Arr(v) => Arr(v.map(f))
+              case Obj(map) => Obj(map.mapValues(f))
+            }
+          }
+      }
+
+      sealed trait ListF[+A, +B]
+      case object Nil extends ListF[Nothing, Nothing]
+      case class Cons[A, B](head: A, tail: B) extends ListF[A, B]
+
+      final case class Fix[F[_]](unfix: F[Fix[F]]) { self =>
+        def transformDown(f: F[Fix[F]] => F[Fix[F]])(implicit F: Functor[F]): Fix[F] =
+          Fix[F](f(unfix).map(_.transformDown(f)))
+
+        def transformUp(f: F[Fix[F]] => F[Fix[F]])(implicit F: Functor[F]): Fix[F] =
+          Fix[F](f(unfix.map(_.transformUp(f))))
+
+        // missing: cata (catamorphism); F[A] => A == algebra
+      }
+
+      type Json = Fix[JsonF]
+      object Json {
+        val null0: Json = Fix[JsonF](Null)
+        def bool(v: Boolean): Json = Fix[JsonF](Bool(v))
+        def str(v: String): Json = Fix[JsonF](Str(v))
+        def num(v: BigDecimal): Json = Fix[JsonF](Num(v))
+        def arr(v: List[Json]): Json = Fix[JsonF](Arr(v))
+        def obj(v: Map[String, Json]): Json = Fix[JsonF](Obj(v))
+      }
+
+      import Json._
+
+      val Example =
+        obj(Map(
+          "address" -> obj(Map(
+            "number" -> str("221B"),
+            "street" -> str("Baker Street")
+          )),
+          "name" -> str("Sherlock Holmes")
+        ))
+
+      def renameField(old: String, newf: String): JsonF[Fix[JsonF]] => JsonF[Fix[JsonF]] =
+        _ match {
+          case Null => Null
+          case j @ Bool(_) => j
+          case j @ Str(_) => j
+          case j @ Num(_) => j
+          case j @ Arr(_) => j
+          case j @ Obj(map) => map.get(old).fold(j)(v => Obj(map + (newf -> v)))
+        }
+      //
+      // def collectFields: Json => List[String] =
+      //   (json: Json) => json match {
+      //     case Null => Nil
+      //     case Bool(value) => Nil
+      //     case Str(value) => Nil
+      //     case Num(value) => Nil
+      //     case Arr(value) => value.flatMap(collectFields)
+      //     case Obj(map0) => map0.keys.toList ++ map0.values.toList.flatMap(collectFields)
+      //   }
+
+      Example.transformDown(renameField("street", "street_name"))
     }
   }
+
+  //object list {
+//
+  //  sealed trait ListF[+A, +B]
+//
+  //  case object Nil extends ListF[Nothing, Nothing]
+//
+  //  case class Cons[A, B](head: A, tail: B) extends ListF[A, B]
+//
+//
+  //  implicit def FunctorListF[A0]: Functor[ListF[A0, ?]] =
+  //    new Functor[ListF[A0, ?]] {
+  //      override def map[A, B](fa: ListF[A0, A])(f: A => B): ListF[A0, B] = fa match {
+  //        case Nil => Nil
+  //        case Cons(head, tail) => Cons(head, f(tail))
+  //      }
+  //    }
+//
+//
+  //  type ListR[A] = Fix[ListF[A, ?]]
+  //  object ListR {
+  //    def nil[A]: ListR[A] = Fix[ListF[A, ?]](Nil)
+  //    def cons[A](head: A, tail: ListR[A]): ListR[A] = Fix(Cons(head, tail))
+  //  }
+//
+  //  def foldRight[A, Z](list: ListR[A], z: Z)(f: (A, Z) => Z): Z =
+  //    list.cata[Z] {
+  //      case Nil => z
+  //      case Cons(a, z) => f(a, z)
+  //    }
+  //}
 
   object selectable {
     sealed trait Parser[+E, +A] { self =>
@@ -431,6 +561,47 @@ object exercises {
   }
 
   object hoas {
-    
+    trait Dsl[Expr[_]] {
+      def int(v: Int): Expr[Int]
+      def plus(l: Expr[Int], r:Expr[Int]): Expr[Int]
+      def minus(l: Expr[Int], r:Expr[Int]): Expr[Int]
+      def times(l: Expr[Int], r: Expr[Int]): Expr[Int]
+      def let[A, B](value: Expr[A], body: Expr[A] => Expr[B]): Expr[B]
+    }
+
+    object Dsl {
+      def apply[F[_]: Dsl] = implicitly[Dsl[F]]
+      import scalaz.zio._
+      implicit def DslIO[E]: Dsl[IO[E, ?]] =
+        new Dsl[IO[E, ?]] {
+          override def int(v: Int): IO[E, Int] = IO.now(v)
+          override def plus(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
+            l.seqWith(r)(_ + _)
+          override def minus(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
+            l.seqWith(r)(_ - _)
+          override def times(l: IO[E, Int], r: IO[E, Int]): IO[E, Int] =
+            l.seqWith(r)(_ * _)
+          override def let[A, B](value: IO[E, A],
+                                 body: IO[E, A] => IO[E, B]): IO[E, B] =
+            value.flatMap(a => body(IO.now(a)))
+        }
+    }
+    // lambda
+    implicit class DslSyntax[F[_]](l: F[Int]) {
+      def + (r: F[Int])(implicit A: Dsl[F]): F[Int] = A.plus(l, r)
+      def - (r: F[Int])(implicit A: Dsl[F]): F[Int] = A.minus(l, r)
+      def * (r: F[Int])(implicit A: Dsl[F]): F[Int] = A.times(l, r)
+    }
+    def int[F[_]: Dsl](v: Int) = Dsl[F].int(v)
+    def let[F[_]: Dsl, A, B](value: F[A])(body: F[A] => F[B]) = Dsl[F].let(value, body)
+    def program[F[_]: Dsl] =
+      let(int(10))(a =>
+        let(int(20))(b =>
+          a * a + b * b
+        )
+      )
+
+    import scalaz.zio.IO
+    val programIO: IO[Nothing, Int] = program[IO[Nothing, ?]]
   }
 }
