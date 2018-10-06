@@ -6,8 +6,42 @@ import scalaz._
 import Scalaz._
 
 object exercises {
-  object free {
-    sealed trait Free[F[_], A] { self =>
+
+  object natural {
+    trait NaturalTransformation[F[_], G[_]] { // functions where the args have kind `* -> *`
+      def apply[A](fa: F[A]): G[A]
+    }
+    type ~> [F[_], G[_]] = NaturalTransformation[F, G]
+    def headOption: List ~> Option =
+      new NaturalTransformation[List, Option] {
+        def apply[A](fa: List[A]): Option[A] =
+          fa.headOption
+      }
+    def right[A]: Either[A, ?] ~> Option = ???
+    def left[B]: Either[?, B] ~> Option =
+      new NaturalTransformation[Either[?, B], Option] {
+        def apply[A](fa: Either[A, B]): Option[A] =
+          fa match {
+            case Left(a) => Some(a)
+            case Right(_) => None
+          }
+      }
+    left(Left(42))    // Some(42)
+    left(Left("bar")) // Some("bar")
+    left(Right(42))   // None
+    import scalaz.zio.IO
+    def fromOption: Option ~> IO[Unit, ?] =
+      new NaturalTransformation[Option, IO[Unit, ?]] {
+        def apply[A](fa: Option[A]): IO[Unit, A] =
+          fa match {
+            case None    => (IO.fail(()) : IO[Unit, A]) // only IO.fail, we don't have an a
+            case Some(a) => (IO.now(a)   : IO[Unit, A])
+          }
+      } // for all as, we can transform an Option to an IO[Unit, A]
+  }
+
+  object free { // Free monad: Given a functor you can get a monad
+    sealed trait Free[F[_], A] { self => // each one is an individual instruction in your program, A is the return value
       final def map[B](f: A => B): Free[F, B] = self.flatMap(f.andThen(Free.point[F, B](_)))
 
       final def flatMap[B](f: A => Free[F, B]): Free[F, B] = Free.FlatMap(self, f)
@@ -18,7 +52,7 @@ object exercises {
       final def *> [B](that: Free[F, B]): Free[F, B] =
         self.flatMap(_ => that)
 
-      final def fold[G[_]: Monad](interpreter: F ~> G): G[A] =
+      final def fold[G[_]: Monad](interpreter: F ~> G): G[A] = // ~> natural transformation
         self match {
           case Free.Return(value0)  => value0().point[G]
           case Free.Effect(fa)      => interpreter(fa)
@@ -36,6 +70,7 @@ object exercises {
       def lift[F[_], A](fa: F[A]): Free[F, A] = Effect(fa)
     }
 
+    // How to use the free monad:
     sealed trait ConsoleF[A]
     final case object ReadLine extends ConsoleF[String]
     final case class PrintLine(line: String) extends ConsoleF[Unit]
@@ -62,6 +97,7 @@ object exercises {
           }
       })
 
+    // Free monad approach to testing:
     case class TestData(input: List[String], output: List[String])
     case class State[S, A](run: S => (S, A)) {
       def eval(s: S): A = run(s)._2
@@ -135,7 +171,7 @@ object exercises {
     type DatabaseSource[A] = Source[DatabaseError, A]
     type DatabaseDerived[A, B] = DatabaseSource[A] => Database[B]
 
-    trait Number[A] {
+    trait Number[A] { // sth like this will exist in ScalaZ 8
       def zero: A
       def one: A
       def plus(l: A, r: A): A
@@ -194,7 +230,7 @@ object exercises {
     final case class Reward()
     final case class Purchase(id: java.util.UUID, description: String, quantity: Int)
 
-    sealed trait Transaction[+AccountID, +Num]
+    sealed trait Transaction[+AccountID, +Num] // appears in the context of the account, so don't need account ID
     object Transaction {
       final case class Redeem   [           Num](amount: Num, reward   : Reward   ) extends Transaction[Nothing  , Num]
       final case class Earn     [           Num](amount: Num, purchase : Purchase ) extends Transaction[Nothing  , Num]
@@ -212,6 +248,8 @@ object exercises {
       final case object ClosedAcccount extends LoyaltyError
     }
 
+    // Final tagless style, abstract over effects
+
     trait LoyaltyTransactions[F[_]] {
       type AccountID = java.util.UUID
 
@@ -227,19 +265,30 @@ object exercises {
     trait Batch[A] {
       def apply[F[_]: LoyaltyTransactions: Applicative]: F[A]
     }
-    trait LoyaltyProgram[F[_]] {
+    // Use like this;
+    //atomic { new Batch[A] {
+    //  def apply[F[_]: LoyaltyTransactions]: F[A] =
+    //    LoyaltyTransactions[F].redeem(...) *>
+    //    (LoyaltyTransactions[F].earn(...) |@|
+    //    LoyaltyTransactions[F].transfer(...))((_, _))
+    //}}
+    // Applicative allows us to combine multiple operations, not only one, and can introspect the leaves of the program as the data structure is static
+    // Monad would make it hard, because you make decisions on the runtime valuee so you would need to implement the atomic guarantees yourself instead of relying on the database
+
+    trait LoyaltyProgram[F[_]] { // we could push failure to F, or reflect that in the type e.g. Either
       type AccountID = java.util.UUID
 
       def atomic[A](batch: Batch[A]): F[A]
 
       def open: F[AccountID]
 
-      def close(accountID: AccountID): F[AccountID]
+      def close(accountID: AccountID): F[AccountID] // type implies that you cannot reopen an account
     }
     object LoyaltyProgram {
       private object internal {
         import java.util.UUID
 
+        // Data structure representing SQL statements that promises to return an A
         sealed trait Statement[A] { self =>
           final def map[B](f: A => B): Statement[B] =
             self.zipWith(Statement.point(()))((a, _) => f(a))
@@ -292,7 +341,8 @@ object exercises {
           type Query = String
 
           def interpret[A](statement: Statement[A]): (JStatement, ResultSet => IO[Exception, A]) =
-            ???
+            ??? // construct SQL statements, compiler
+          // if you want to do optimisations, you would possibly need intermediate types lower level than Statements
 
           def atomic[A](batch: Batch[A]): IO[Exception, A] = {
             val statement: Statement[A] = batch[Statement]
@@ -402,6 +452,8 @@ object exercises {
           Fix[F](f(unfix.map(_.transformUp(f))))
 
         def cata[A](f: F[A] => A)(implicit F: Functor[F]): A = f(unfix.map(_.cata(f)))
+        //  ^ == catamorphism
+        //             ^ F[A] => A == algebra
       }
 
       type Json = Fix[JsonF]
@@ -450,37 +502,6 @@ object exercises {
     }
   }
 
-  //object list {
-//
-  //  sealed trait ListF[+A, +B]
-//
-  //  case object Nil extends ListF[Nothing, Nothing]
-//
-  //  case class Cons[A, B](head: A, tail: B) extends ListF[A, B]
-//
-//
-  //  implicit def FunctorListF[A0]: Functor[ListF[A0, ?]] =
-  //    new Functor[ListF[A0, ?]] {
-  //      override def map[A, B](fa: ListF[A0, A])(f: A => B): ListF[A0, B] = fa match {
-  //        case Nil => Nil
-  //        case Cons(head, tail) => Cons(head, f(tail))
-  //      }
-  //    }
-//
-//
-  //  type ListR[A] = Fix[ListF[A, ?]]
-  //  object ListR {
-  //    def nil[A]: ListR[A] = Fix[ListF[A, ?]](Nil)
-  //    def cons[A](head: A, tail: ListR[A]): ListR[A] = Fix(Cons(head, tail))
-  //  }
-//
-  //  def foldRight[A, Z](list: ListR[A], z: Z)(f: (A, Z) => Z): Z =
-  //    list.cata[Z] {
-  //      case Nil => z
-  //      case Cons(a, z) => f(a, z)
-  //    }
-  //}
-
   object selectable {
     sealed trait Parser[+E, +A] { self =>
       import Parser._
@@ -517,6 +538,7 @@ object exercises {
       case class Select[E, A](
         condition: Parser[E, Boolean], ifTrue: Parser[E, A], ifFalse: Parser[E, A]) extends Parser[E, A]
 
+      // Not as powerful as Monad, but you can introspect (and you can build a compiler)
       implicit def ApplicativeParser[E]: Applicative[Parser[E, ?]] =
         new Applicative[Parser[E, ?]] {
           def point[A](a: => A): Parser[E,A] = Succeed(a)

@@ -657,18 +657,7 @@ object zio_effects {
         failure = (error: Throwable)   => k(ExitResult.Failed(error))
       )
     )
-
-
-  //
-  // EXERCISE 7.5
-  //
-  // Wrap the following Java-esque callback API into an `IO` using `IO.async`.
-  //
-  def readChunk(success: Array[Byte] => Unit, failure: Throwable => Unit): Unit = ???
-  val readChunkIO: IO[Throwable, Array[Byte]] =
-    IO.async[Throwable, Array[Byte]](k =>
-      readChunk(k.compose(ExitResult.Completed(_)), k.compose(ExitResult.Failed(_)))
-    )
+  // readChunk(k.compose(ExitResult.Completed(_)), k.compose(ExitResult.Failed(_)))
 
   //
   // EXERCISE 8
